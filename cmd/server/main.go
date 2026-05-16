@@ -25,6 +25,14 @@ func main() {
 			fmt.Printf("- %s：%s，预估价格：%d 元\n", plan.Method, plan.Description, plan.Price)
 			fmt.Println("  预订/查询链接：", plan.BookingLink)
 		}
+
+		recommendedPlan := tools.RecommendTransportPlan(tripRequest, transportPlans)
+
+		fmt.Println()
+		fmt.Println("推荐交通方式：", recommendedPlan.Method)
+		fmt.Println("推荐理由：", recommendedPlan.Reason)
+		fmt.Println("预估价格：", recommendedPlan.Price, "元")
+		fmt.Println("查询链接：", recommendedPlan.BookingLink)
 	}
 }
 	

@@ -6,4 +6,5 @@ type TransportPlan struct {
 	Price       int
 	Description string
 	BookingLink string
+	Reason      string
 }

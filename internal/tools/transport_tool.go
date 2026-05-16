@@ -29,3 +29,37 @@ func GenerateTransportPlans(request model.TripRequest) []model.TransportPlan {
 
 	return plans
 }
+
+func RecommendTransportPlan(request model.TripRequest, plans []model.TransportPlan) model.TransportPlan {
+	if len(plans) == 0 {
+		return model.TransportPlan{}
+	}
+
+	if request.Preference == "轻松" {
+		for _, plan := range plans {
+			if plan.Method == "高铁" {
+				plan.Reason = "高铁时间稳定、乘坐舒适，省去了机场通勤和安检等待，适合轻松出行。"
+				return plan
+			}
+		}
+	}
+
+	if request.Preference == "省钱" {
+		for _, plan := range plans {
+			if plan.Method == "高铁" {
+				plan.Reason = "高铁价格通常低于飞机，同时速度和舒适度都比较均衡。"
+				return plan
+			}
+		}
+	}
+
+	for _, plan := range plans {
+		if plan.Price <= request.Budget/3 {
+			plan.Reason = "该方案价格占总预算比例较低，适合当前预算。"
+			return plan
+		}
+	}
+
+	plans[0].Reason = "默认推荐该方案，后续会结合真实价格和路线数据进一步优化。"
+	return plans[0]
+}
