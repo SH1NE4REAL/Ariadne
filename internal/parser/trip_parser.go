@@ -17,6 +17,7 @@ func ParseTripRequest(rawInput string) model.TripRequest {
 	request.Days = parseDays(rawInput)
 	request.Budget = parseBudget(rawInput)
 	request.Preference = parsePreference(rawInput)
+	request.TransportPreference = parseTransportPreference(rawInput)
 
 	return request
 }
@@ -93,6 +94,21 @@ func parsePreference(text string) string {
 	}
 	if strings.Contains(text, "拍照") {
 		return "拍照"
+	}
+
+	return ""
+}
+func parseTransportPreference(text string) string {
+	if strings.Contains(text, "高铁") || strings.Contains(text, "动车") || strings.Contains(text, "火车") {
+		return "高铁"
+	}
+
+	if strings.Contains(text, "飞机") || strings.Contains(text, "机票") || strings.Contains(text, "航班") {
+		return "飞机"
+	}
+
+	if strings.Contains(text, "自驾") || strings.Contains(text, "开车") {
+		return "自驾"
 	}
 
 	return ""

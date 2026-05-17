@@ -45,7 +45,8 @@ JSON 字段如下：
   "destination": "目的地，没有则为空字符串",
   "days": 天数，没有则为0,
   "budget": 预算数字，没有则为0,
-  "preference": "用户偏好，例如轻松、省钱、美食、拍照，没有则为空字符串"
+  "preference": "用户整体偏好，例如轻松、省钱、美食、拍照，没有则为空字符串",
+  "transport_preference": "用户指定的交通方式，例如高铁、飞机、自驾、火车，没有则为空字符串"
 }
 
 规则：
@@ -53,7 +54,8 @@ JSON 字段如下：
 2. 如果用户说“去杭州”“目的地杭州”“想玩杭州”，destination 都应该是“杭州”。
 3. 如果用户说“三天”，days 应该是 3。
 4. 如果用户说“预算1500”“大概花1500”，budget 应该是 1500。
-5. 只返回 JSON。`
+5. 如果用户说“只想坐高铁”“高铁优先”“不要飞机”，transport_preference 应该尽量识别为“高铁”。
+6. 只返回 JSON。`
 }
 
 func extractJSON (text string) string {

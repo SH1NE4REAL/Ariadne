@@ -21,6 +21,7 @@ func NewPriceCompareTool() PriceCompareTool {
 
 func (t PriceCompareTool) Run(request model.TripRequest) model.BestBookingOption {
 	quotes := generateMockPriceQuotes(request)
+	quotes = filterQuotesByTransportPreference(request, quotes)
 
 	for i := range quotes {
 		quotes[i].Score = calculateQuoteScore(request, quotes[i])
@@ -131,6 +132,10 @@ func calculateQuoteScore(request model.TripRequest, quote model.PriceQuote) int 
 }
 
 func generateQuoteReason(request model.TripRequest, quote model.PriceQuote) string {
+	if request.TransportPreference != "" && quote.Method == request.TransportPreference {
+		return "该方案符合你指定的交通方式，并在当前候选中综合价格、时间和便利性后作为优先推荐。"
+	}
+	
 	if request.Preference == "省钱" && quote.Price <= 300 {
 		return "该方案价格较低，符合省钱偏好，适合预算有限的用户。"
 	}
@@ -152,4 +157,24 @@ func generateQuoteReason(request model.TripRequest, quote model.PriceQuote) stri
 	}
 
 	return "该方案综合价格、时间和便利性后可作为备选。"
+}
+
+func filterQuotesByTransportPreference(request model.TripRequest, quotes []model.PriceQuote) []model.PriceQuote {
+	if request.TransportPreference == "" {
+		return quotes
+	}
+
+	filtered := make([]model.PriceQuote, 0)
+
+	for _, quote := range quotes {
+		if quote.Method == request.TransportPreference {
+			filtered = append(filtered, quote)
+		}
+	}
+
+	if len(filtered) == 0 {
+		return quotes
+	}
+
+	return filtered
 }
