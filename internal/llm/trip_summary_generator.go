@@ -4,26 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 
 	"ariadne/internal/model"
-
-	"github.com/cloudwego/eino-ext/components/model/openai"
-	"github.com/cloudwego/eino/schema"
 )
 
-func GenerateTripSummaryWithLLM(ctx context.Context, plan model.FinalTripPlan, config model.LLMConfig) (string, error) {
-	if config.APIKey == "" || config.Model == "" || config.BaseURL == "" {
-		return "", errors.New("llm config is incomplete")
-	}
-
-	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
-		APIKey:  config.APIKey,
-		Model:   config.Model,
-		BaseURL: config.BaseURL,
-	})
-	if err != nil {
-		return "", err
+func GenerateTripSummaryWithLLM(ctx context.Context, plan model.FinalTripPlan, client *LLMClient) (string, error) {
+	if client == nil {
+		return "", errors.New("llm client is nil")
 	}
 
 	planBytes, err := json.Marshal(plan)
@@ -31,15 +18,7 @@ func GenerateTripSummaryWithLLM(ctx context.Context, plan model.FinalTripPlan, c
 		return "", err
 	}
 
-	resp, err := chatModel.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(buildTripSummarySystemPrompt()),
-		schema.UserMessage(string(planBytes)),
-	})
-	if err != nil {
-		return "", err
-	}
-
-	return strings.TrimSpace(resp.Content), nil
+	return client.Generate(ctx, buildTripSummarySystemPrompt(), string(planBytes))
 }
 
 func buildTripSummarySystemPrompt() string {

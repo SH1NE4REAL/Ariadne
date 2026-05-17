@@ -26,15 +26,30 @@ func NewTripAgent() TripAgent {
 }
 
 func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgentResult {
+	ctx := context.Background()
 	agentSteps := make([]model.AgentStep, 0)
 
-	useLLMParser := isLLMConfigComplete(llmConfig)
+	useLLMParser := llm.IsLLMConfigComplete(llmConfig)
+
+	var llmClient *llm.LLMClient
 
 	if useLLMParser {
-		agentSteps = append(agentSteps, model.AgentStep{
-			ToolName:    "llm_config_checker",
-			Description: "检测到完整 LLM 配置，后续可使用用户自带 Key 进行智能解析",
-		})
+		client, err := llm.NewLLMClient(ctx, llmConfig)
+		if err != nil {
+			useLLMParser = false
+
+			agentSteps = append(agentSteps, model.AgentStep{
+				ToolName:    "llm_config_checker",
+				Description: "检测到 LLM 配置，但创建 Eino ChatModel 失败，已回退到规则解析器",
+			})
+		} else {
+			llmClient = client
+
+			agentSteps = append(agentSteps, model.AgentStep{
+				ToolName:    "llm_config_checker",
+				Description: "检测到完整 LLM 配置，已创建 Eino ChatModel",
+			})
+		}
 	} else {
 		agentSteps = append(agentSteps, model.AgentStep{
 			ToolName:    "llm_config_checker",
@@ -42,36 +57,33 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 		})
 	}
 
-	
-
 	var tripRequest model.TripRequest
 
-if useLLMParser {
-	llmTripRequest, err := llm.ParseTripRequestWithLLM(context.Background(), message, llmConfig)
-	if err != nil {
+	if useLLMParser {
+		llmTripRequest, err := llm.ParseTripRequestWithLLM(ctx, message, llmClient)
+		if err != nil {
+			tripRequest = parser.ParseTripRequest(message)
+
+			agentSteps = append(agentSteps, model.AgentStep{
+				ToolName:    "llm_parser",
+				Description: "Eino 模型解析失败，已自动回退到规则解析器",
+			})
+		} else {
+			tripRequest = llmTripRequest
+
+			agentSteps = append(agentSteps, model.AgentStep{
+				ToolName:    "llm_parser",
+				Description: "使用 Eino ChatModel 和用户自带 Key 解析旅行需求",
+			})
+		}
+	} else {
 		tripRequest = parser.ParseTripRequest(message)
 
 		agentSteps = append(agentSteps, model.AgentStep{
-			ToolName:    "llm_parser",
-			Description: "Eino 模型解析失败，已自动回退到规则解析器",
-		})
-	} else {
-		tripRequest = llmTripRequest
-
-		agentSteps = append(agentSteps, model.AgentStep{
-			ToolName:    "llm_parser",
-			Description: "使用 Eino ChatModel 和用户自带 Key 解析旅行需求",
+			ToolName:    "rule_parser",
+			Description: "使用正则和关键词规则解析用户输入，提取出发地、目的地、天数、预算和偏好",
 		})
 	}
-} else {
-	tripRequest = parser.ParseTripRequest(message)
-
-	agentSteps = append(agentSteps, model.AgentStep{
-		ToolName:    "rule_parser",
-		Description: "使用正则和关键词规则解析用户输入，提取出发地、目的地、天数、预算和偏好",
-	})
-}
-	
 
 	questions := validator.CheckTripRequest(tripRequest)
 	agentSteps = append(agentSteps, model.AgentStep{
@@ -112,38 +124,38 @@ if useLLMParser {
 	summary := generateSummary(tripRequest, totalCost)
 
 	finalPlan := model.FinalTripPlan{
-	Request:            tripRequest,
-	TransportPlans:     transportPlans,
-	Attractions:        attractions,
-	DailyRoutes:        dailyRoutes,
-	AgentSteps:         agentSteps,
-	TotalEstimatedCost: totalCost,
-	Summary:            summary,
-}
-
-if useLLMParser {
-	llmSummary, err := llm.GenerateTripSummaryWithLLM(context.Background(), finalPlan, llmConfig)
-	if err != nil {
-		agentSteps = append(agentSteps, model.AgentStep{
-			ToolName:    "llm_summary_generator",
-			Description: "Eino 总结生成失败，已保留规则版总结",
-		})
-	} else {
-		finalPlan.Summary = llmSummary
-
-		agentSteps = append(agentSteps, model.AgentStep{
-			ToolName:    "llm_summary_generator",
-			Description: "使用 Eino ChatModel 和用户自带 Key 生成旅行总结",
-		})
+		Request:            tripRequest,
+		TransportPlans:     transportPlans,
+		Attractions:        attractions,
+		DailyRoutes:        dailyRoutes,
+		AgentSteps:         agentSteps,
+		TotalEstimatedCost: totalCost,
+		Summary:            summary,
 	}
 
-	finalPlan.AgentSteps = agentSteps
-}
+	if useLLMParser && llmClient != nil {
+		llmSummary, err := llm.GenerateTripSummaryWithLLM(ctx, finalPlan, llmClient)
+		if err != nil {
+			agentSteps = append(agentSteps, model.AgentStep{
+				ToolName:    "llm_summary_generator",
+				Description: "Eino 总结生成失败，已保留规则版总结",
+			})
+		} else {
+			finalPlan.Summary = llmSummary
 
-return model.TripAgentResult{
-	NeedClarification: false,
-	FinalPlan:         finalPlan,
-}
+			agentSteps = append(agentSteps, model.AgentStep{
+				ToolName:    "llm_summary_generator",
+				Description: "使用 Eino ChatModel 和用户自带 Key 生成旅行总结",
+			})
+		}
+
+		finalPlan.AgentSteps = agentSteps
+	}
+
+	return model.TripAgentResult{
+		NeedClarification: false,
+		FinalPlan:         finalPlan,
+	}
 }
 
 func calculateTotalCost(transportPlans []model.TransportPlan, dailyRoutes []model.DailyRoute) int {
@@ -174,8 +186,4 @@ func generateSummary(request model.TripRequest, totalCost int) string {
 	}
 
 	return fmt.Sprintf("当前方案预估花费约 %d 元，可作为初版旅行计划参考。", totalCost)
-}
-
-func isLLMConfigComplete(config model.LLMConfig) bool {
-	return config.APIKey != "" && config.Model != "" && config.BaseURL != ""
 }

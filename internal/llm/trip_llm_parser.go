@@ -7,34 +7,19 @@ import (
 	"strings"
 
 	"ariadne/internal/model"
-
-	"github.com/cloudwego/eino-ext/components/model/openai"
-	"github.com/cloudwego/eino/schema"
 )
 
-func ParseTripRequestWithLLM(ctx context.Context, message string, config model.LLMConfig) (model.TripRequest, error) {
-	if config.APIKey == "" || config.Model == "" || config.BaseURL == "" {
-		return model.TripRequest{}, errors.New("llm config is incomplete")
+func ParseTripRequestWithLLM(ctx context.Context, message string, client *LLMClient) (model.TripRequest, error) {
+	if client == nil {
+		return model.TripRequest{}, errors.New("llm client is nil")
 	}
 
-	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
-		APIKey:  config.APIKey,
-		Model:   config.Model,
-		BaseURL: config.BaseURL,
-	})
+	content, err := client.Generate(ctx, buildTripParserSystemPrompt(), message)
 	if err != nil {
 		return model.TripRequest{}, err
 	}
 
-	resp, err := chatModel.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(buildTripParserSystemPrompt()),
-		schema.UserMessage(message),
-	})
-	if err != nil {
-		return model.TripRequest{}, err
-	}
-
-	jsonText := extractJSON(resp.Content)
+	jsonText := extractJSON(content)
 
 	var tripRequest model.TripRequest
 	err = json.Unmarshal([]byte(jsonText), &tripRequest)
@@ -71,7 +56,7 @@ JSON 字段如下：
 5. 只返回 JSON。`
 }
 
-func extractJSON(text string) string {
+func extractJSON (text string) string {
 	text = strings.TrimSpace(text)
 
 	text = strings.TrimPrefix(text, "```json")
