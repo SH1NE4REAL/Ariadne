@@ -18,6 +18,7 @@ type TripAgent struct {
 	LinkTool         tools.LinkTool
 	PriceCompareTool tools.PriceCompareTool
 	BudgetTool       tools.BudgetTool
+	HotelTool        tools.HotelTool
 }
 
 func NewTripAgent() TripAgent {
@@ -28,6 +29,7 @@ func NewTripAgent() TripAgent {
 		LinkTool:         tools.NewLinkTool(),
 		PriceCompareTool: tools.NewPriceCompareTool(),
 		BudgetTool:       tools.NewBudgetTool(),
+		HotelTool:        tools.NewHotelTool(),
 	}
 }
 
@@ -144,6 +146,12 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 	Description: "根据总预算、天数、偏好和最优交通方案拆分旅行预算",
 	})
 
+	hotelOptions := a.HotelTool.Run(tripRequest, budgetBreakdown)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.HotelTool.Name,
+		Description: "根据目的地、旅行天数和每晚住宿预算推荐住宿档位",
+	})
+
 	totalCost := calculateTotalCost(transportPlans, dailyRoutes)
 	summary := generateSummary(tripRequest, totalCost)
 
@@ -155,6 +163,7 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 	BookingLinks:       bookingLinks,
 	BestBookingOption:  bestBookingOption,
 	BudgetBreakdown:    budgetBreakdown,
+	HotelOptions:       hotelOptions,
 	AgentSteps:         agentSteps,
 	TotalEstimatedCost: totalCost,
 	Summary:            summary,
