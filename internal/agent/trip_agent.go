@@ -22,9 +22,25 @@ func NewTripAgent() TripAgent {
 }
 
 func (a TripAgent) Plan(request model.TripRequest) model.FinalTripPlan {
+	agentSteps := make([]model.AgentStep, 0)
+
 	transportPlans := a.TransportTool.Run(request)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.TransportTool.Name,
+		Description: "根据出发地、目的地、预算和偏好生成交通方案",
+	})
+
 	attractions := a.AttractionTool.Run(request)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.AttractionTool.Name,
+		Description: "根据目的地、旅行天数和用户偏好推荐景点",
+	})
+
 	dailyRoutes := a.RouteTool.Run(request, attractions)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.RouteTool.Name,
+		Description: "根据旅行请求和景点列表生成每日行程路线",
+	})
 
 	totalCost := calculateTotalCost(transportPlans, dailyRoutes)
 	summary := generateSummary(request, totalCost)
@@ -34,6 +50,7 @@ func (a TripAgent) Plan(request model.TripRequest) model.FinalTripPlan {
 		TransportPlans:     transportPlans,
 		Attractions:        attractions,
 		DailyRoutes:        dailyRoutes,
+		AgentSteps:         agentSteps,
 		TotalEstimatedCost: totalCost,
 		Summary:            summary,
 	}
