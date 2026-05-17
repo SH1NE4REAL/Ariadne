@@ -13,8 +13,9 @@ func GenerateDailyRoutes(request model.TripRequest, attractions []model.Attracti
 		route := model.DailyRoute{
 			Day:         day,
 			Title:       generateRouteTitle(day, request),
-			Attractions: pickAttractionsForDay(day, attractions),
+			Attractions: pickAttractionsForDay(day, request.Days, attractions),
 			Summary:     generateRouteSummary(day, request),
+			DataSource:  "rule",
 		}
 
 		route.EstimatedCost = calculateRouteCost(route.Attractions)
@@ -49,16 +50,38 @@ func generateRouteSummary(day int, request model.TripRequest) string {
 	return "这一天根据目的地景点进行常规路线安排。"
 }
 
-func pickAttractionsForDay(day int, attractions []model.Attraction) []model.Attraction {
+func pickAttractionsForDay(day int, totalDays int, attractions []model.Attraction) []model.Attraction {
 	if len(attractions) == 0 {
 		return []model.Attraction{}
 	}
 
-	index := (day - 1) % len(attractions)
-
-	return []model.Attraction{
-		attractions[index],
+	if totalDays <= 0 {
+		totalDays = 1
 	}
+
+	if day <= 0 {
+		day = 1
+	}
+
+	start := (day - 1) * len(attractions) / totalDays
+	end := day * len(attractions) / totalDays
+
+	if start >= len(attractions) {
+		return []model.Attraction{}
+	}
+
+	if end > len(attractions) {
+		end = len(attractions)
+	}
+
+	if start == end {
+		end = start + 1
+		if end > len(attractions) {
+			end = len(attractions)
+		}
+	}
+
+	return attractions[start:end]
 }
 
 func calculateRouteCost(attractions []model.Attraction) int {

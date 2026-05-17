@@ -12,28 +12,32 @@ import (
 )
 
 type TripAgent struct {
-	TransportTool    tools.TransportTool
-	AttractionTool   tools.AttractionTool
-	RouteTool        tools.RouteTool
-	LinkTool         tools.LinkTool
-	PriceCompareTool tools.PriceCompareTool
-	BudgetTool       tools.BudgetTool
-	HotelTool        tools.HotelTool
-	GeoTool          tools.GeoTool
-	RouteDistanceTool tools.RouteDistanceTool
+	TransportTool      tools.TransportTool
+	AttractionTool     tools.AttractionTool
+	RouteTool          tools.RouteTool
+	LinkTool           tools.LinkTool
+	PriceCompareTool   tools.PriceCompareTool
+	BudgetTool         tools.BudgetTool
+	HotelTool          tools.HotelTool
+	GeoTool            tools.GeoTool
+	RouteDistanceTool  tools.RouteDistanceTool
+	POITool            tools.POITool
+	DistanceMatrixTool tools.DistanceMatrixTool
 }
 
 func NewTripAgent() TripAgent {
 	return TripAgent{
-		TransportTool:    tools.NewTransportTool(),
-		AttractionTool:   tools.NewAttractionTool(),
-		RouteTool:        tools.NewRouteTool(),
-		LinkTool:         tools.NewLinkTool(),
-		PriceCompareTool: tools.NewPriceCompareTool(),
-		BudgetTool:       tools.NewBudgetTool(),
-		HotelTool:        tools.NewHotelTool(),
-		GeoTool:          tools.NewGeoTool(),
-		RouteDistanceTool: tools.NewRouteDistanceTool(),
+		TransportTool:      tools.NewTransportTool(),
+		AttractionTool:     tools.NewAttractionTool(),
+		RouteTool:          tools.NewRouteTool(),
+		LinkTool:           tools.NewLinkTool(),
+		PriceCompareTool:   tools.NewPriceCompareTool(),
+		BudgetTool:         tools.NewBudgetTool(),
+		HotelTool:          tools.NewHotelTool(),
+		GeoTool:            tools.NewGeoTool(),
+		RouteDistanceTool:  tools.NewRouteDistanceTool(),
+		POITool:            tools.NewPOITool(),
+		DistanceMatrixTool: tools.NewDistanceMatrixTool(),
 	}
 }
 
@@ -160,11 +164,28 @@ if mapConfig.TencentMapKey != "" {
 		Description: "根据出发地、目的地、预算和偏好生成交通方案",
 	})
 
-	attractions := a.AttractionTool.Run(tripRequest)
+	attractions := make([]model.Attraction, 0)
+
+if mapConfig.TencentMapKey != "" {
+	attractions = a.POITool.Run(tripRequest, mapConfig)
+
+	if len(attractions) > 0 {
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    a.POITool.Name,
+			Description: "使用腾讯位置服务地点搜索获取真实景点 POI",
+		})
+	} else {
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    a.POITool.Name,
+			Description: "腾讯地点搜索未返回可用景点 POI",
+		})
+	}
+} else {
 	agentSteps = append(agentSteps, model.AgentStep{
-		ToolName:    a.AttractionTool.Name,
-		Description: "根据目的地、旅行天数和用户偏好推荐景点",
+		ToolName:    a.POITool.Name,
+		Description: "未提供腾讯位置服务 Key，跳过真实 POI 搜索",
 	})
+}
 
 	dailyRoutes := a.RouteTool.Run(tripRequest, attractions)
 	agentSteps = append(agentSteps, model.AgentStep{
@@ -216,6 +237,19 @@ if routeDistance.Status == "ok" {
 	})
 }
 
+if mapConfig.TencentMapKey != "" {
+	dailyRoutes = a.DistanceMatrixTool.Run(dailyRoutes, mapConfig)
+
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.DistanceMatrixTool.Name,
+		Description: "使用腾讯距离矩阵计算每日景点之间的真实路面距离和预计时间",
+	})
+} else {
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.DistanceMatrixTool.Name,
+		Description: "未提供腾讯位置服务 Key，跳过每日景点间距离矩阵计算",
+	})
+}
 
 	totalCost := calculateTotalCost(bestBookingOption, dailyRoutes, hotelOptions)
 	summary := generateSummary(tripRequest, totalCost)
@@ -235,6 +269,7 @@ if routeDistance.Status == "ok" {
 	AgentSteps:          agentSteps,
 	TotalEstimatedCost:  totalCost,
 	Summary:             summary,
+	
 }
 	if useLLMParser && llmClient != nil {
 		llmSummary, err := llm.GenerateTripSummaryWithLLM(ctx, finalPlan, llmClient)
