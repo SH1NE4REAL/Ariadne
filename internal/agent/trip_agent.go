@@ -20,6 +20,7 @@ type TripAgent struct {
 	BudgetTool       tools.BudgetTool
 	HotelTool        tools.HotelTool
 	GeoTool          tools.GeoTool
+	RouteDistanceTool tools.RouteDistanceTool
 }
 
 func NewTripAgent() TripAgent {
@@ -32,6 +33,7 @@ func NewTripAgent() TripAgent {
 		BudgetTool:       tools.NewBudgetTool(),
 		HotelTool:        tools.NewHotelTool(),
 		GeoTool:          tools.NewGeoTool(),
+		RouteDistanceTool: tools.NewRouteDistanceTool(),
 	}
 }
 
@@ -114,7 +116,7 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig, mapConfig mode
 	}
 
 	var originLocation model.Location
-var destinationLocation model.Location
+	var destinationLocation model.Location
 
 if mapConfig.TencentMapKey != "" {
 	origin, err := a.GeoTool.Run(tripRequest.Origin, mapConfig)
@@ -131,6 +133,7 @@ if mapConfig.TencentMapKey != "" {
 		})
 	}
 
+	
 	destination, err := a.GeoTool.Run(tripRequest.Destination, mapConfig)
 	if err != nil {
 		agentSteps = append(agentSteps, model.AgentStep{
@@ -193,6 +196,27 @@ if mapConfig.TencentMapKey != "" {
 		Description: "根据目的地、旅行天数和每晚住宿预算推荐住宿档位",
 	})
 
+	routeDistance := a.RouteDistanceTool.Run(
+	tripRequest.Origin,
+	tripRequest.Destination,
+	originLocation,
+	destinationLocation,
+	mapConfig,
+)
+
+if routeDistance.Status == "ok" {
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.RouteDistanceTool.Name,
+		Description: "使用腾讯位置服务获取真实驾车距离和预计时间",
+	})
+} else {
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.RouteDistanceTool.Name,
+		Description: "真实路线距离获取失败：" + routeDistance.Message,
+	})
+}
+
+
 	totalCost := calculateTotalCost(bestBookingOption, dailyRoutes, hotelOptions)
 	summary := generateSummary(tripRequest, totalCost)
 
@@ -200,6 +224,7 @@ if mapConfig.TencentMapKey != "" {
 	Request:             tripRequest,
 	OriginLocation:      originLocation,
 	DestinationLocation: destinationLocation,
+	RouteDistance:       routeDistance,
 	TransportPlans:      transportPlans,
 	Attractions:         attractions,
 	DailyRoutes:         dailyRoutes,

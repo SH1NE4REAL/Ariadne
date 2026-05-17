@@ -36,6 +36,7 @@ func buildTripSummarySystemPrompt() string {
 5. 不要声称 total_estimated_cost 不包含交通或住宿，除非 JSON 明确说明。
 6. 不要编造 JSON 中没有的信息，例如真实车次、真实酒店名、真实票价、真实余票。
 7. 如果地图经纬度为空或地理编码失败，不要在总结中强调路线距离或地图精确性。
+8. route_distance 如果 status 为 ok，则表示来自腾讯位置服务的真实路线规划结果；distance_meters 为路线距离米，duration_minutes 为路线预计时间分钟。
 
 输出要求：
 1. 只返回一段中文总结。
