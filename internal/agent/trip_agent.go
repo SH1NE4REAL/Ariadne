@@ -12,18 +12,20 @@ import (
 )
 
 type TripAgent struct {
-	TransportTool  tools.TransportTool
-	AttractionTool tools.AttractionTool
-	RouteTool      tools.RouteTool
-	LinkTool       tools.LinkTool
+	TransportTool    tools.TransportTool
+	AttractionTool   tools.AttractionTool
+	RouteTool        tools.RouteTool
+	LinkTool         tools.LinkTool
+	PriceCompareTool tools.PriceCompareTool
 }
 
 func NewTripAgent() TripAgent {
 	return TripAgent{
-		TransportTool:  tools.NewTransportTool(),
-		AttractionTool: tools.NewAttractionTool(),
-		RouteTool:      tools.NewRouteTool(),
-		LinkTool:       tools.NewLinkTool(),
+		TransportTool:    tools.NewTransportTool(),
+		AttractionTool:   tools.NewAttractionTool(),
+		RouteTool:        tools.NewRouteTool(),
+		LinkTool:         tools.NewLinkTool(),
+		PriceCompareTool: tools.NewPriceCompareTool(),
 	}
 }
 
@@ -122,6 +124,12 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 		Description: "根据旅行请求和景点列表生成每日行程路线",
 	})
 
+	bestBookingOption := a.PriceCompareTool.Run(tripRequest)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.PriceCompareTool.Name,
+		Description: "根据预算、偏好和候选报价选择综合最优链接",
+	})
+
 	bookingLinks := a.LinkTool.Run(tripRequest)
 	agentSteps = append(agentSteps, model.AgentStep{
 	ToolName:    a.LinkTool.Name,
@@ -137,6 +145,7 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 		Attractions:        attractions,
 		DailyRoutes:        dailyRoutes,
 		BookingLinks:       bookingLinks,
+		BestBookingOption:  bestBookingOption,
 		AgentSteps:         agentSteps,
 		TotalEstimatedCost: totalCost,
 		Summary:            summary,
