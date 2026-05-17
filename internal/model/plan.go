@@ -8,4 +8,5 @@ type FinalTripPlan struct {
 	AgentSteps         []AgentStep     `json:"agent_steps"`
 	TotalEstimatedCost int             `json:"total_estimated_cost"`
 	Summary            string          `json:"summary"`
+	BookingLinks []BookingLink `json:"booking_links"`
 }

@@ -15,6 +15,7 @@ type TripAgent struct {
 	TransportTool  tools.TransportTool
 	AttractionTool tools.AttractionTool
 	RouteTool      tools.RouteTool
+	LinkTool       tools.LinkTool
 }
 
 func NewTripAgent() TripAgent {
@@ -22,6 +23,7 @@ func NewTripAgent() TripAgent {
 		TransportTool:  tools.NewTransportTool(),
 		AttractionTool: tools.NewAttractionTool(),
 		RouteTool:      tools.NewRouteTool(),
+		LinkTool:       tools.NewLinkTool(),
 	}
 }
 
@@ -120,6 +122,12 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 		Description: "根据旅行请求和景点列表生成每日行程路线",
 	})
 
+	bookingLinks := a.LinkTool.Run(tripRequest)
+	agentSteps = append(agentSteps, model.AgentStep{
+	ToolName:    a.LinkTool.Name,
+	Description: "生成交通、酒店、地图和景点查询跳转链接",
+	})
+
 	totalCost := calculateTotalCost(transportPlans, dailyRoutes)
 	summary := generateSummary(tripRequest, totalCost)
 
@@ -128,11 +136,11 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 		TransportPlans:     transportPlans,
 		Attractions:        attractions,
 		DailyRoutes:        dailyRoutes,
+		BookingLinks:       bookingLinks,
 		AgentSteps:         agentSteps,
 		TotalEstimatedCost: totalCost,
 		Summary:            summary,
 	}
-
 	if useLLMParser && llmClient != nil {
 		llmSummary, err := llm.GenerateTripSummaryWithLLM(ctx, finalPlan, llmClient)
 		if err != nil {
