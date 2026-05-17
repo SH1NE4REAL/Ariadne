@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 
+	"ariadne/internal/llm"
 	"ariadne/internal/model"
 	"ariadne/internal/parser"
 	"ariadne/internal/tools"
@@ -40,19 +42,35 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 		})
 	}
 
-	tripRequest := parser.ParseTripRequest(message)
+	
 
-	if useLLMParser {
+	var tripRequest model.TripRequest
+
+if useLLMParser {
+	llmTripRequest, err := llm.ParseTripRequestWithLLM(context.Background(), message, llmConfig)
+	if err != nil {
+		tripRequest = parser.ParseTripRequest(message)
+
 		agentSteps = append(agentSteps, model.AgentStep{
-			ToolName:    "llm_parser_placeholder",
-			Description: "当前版本尚未接入 Eino 模型解析，暂时回退到规则解析器",
+			ToolName:    "llm_parser",
+			Description: "Eino 模型解析失败，已自动回退到规则解析器",
 		})
 	} else {
+		tripRequest = llmTripRequest
+
 		agentSteps = append(agentSteps, model.AgentStep{
-			ToolName:    "rule_parser",
-			Description: "使用正则和关键词规则解析用户输入，提取出发地、目的地、天数、预算和偏好",
+			ToolName:    "llm_parser",
+			Description: "使用 Eino ChatModel 和用户自带 Key 解析旅行需求",
 		})
 	}
+} else {
+	tripRequest = parser.ParseTripRequest(message)
+
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    "rule_parser",
+		Description: "使用正则和关键词规则解析用户输入，提取出发地、目的地、天数、预算和偏好",
+	})
+}
 	
 
 	questions := validator.CheckTripRequest(tripRequest)
@@ -94,19 +112,38 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 	summary := generateSummary(tripRequest, totalCost)
 
 	finalPlan := model.FinalTripPlan{
-		Request:            tripRequest,
-		TransportPlans:     transportPlans,
-		Attractions:        attractions,
-		DailyRoutes:        dailyRoutes,
-		AgentSteps:         agentSteps,
-		TotalEstimatedCost: totalCost,
-		Summary:            summary,
+	Request:            tripRequest,
+	TransportPlans:     transportPlans,
+	Attractions:        attractions,
+	DailyRoutes:        dailyRoutes,
+	AgentSteps:         agentSteps,
+	TotalEstimatedCost: totalCost,
+	Summary:            summary,
+}
+
+if useLLMParser {
+	llmSummary, err := llm.GenerateTripSummaryWithLLM(context.Background(), finalPlan, llmConfig)
+	if err != nil {
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    "llm_summary_generator",
+			Description: "Eino 总结生成失败，已保留规则版总结",
+		})
+	} else {
+		finalPlan.Summary = llmSummary
+
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    "llm_summary_generator",
+			Description: "使用 Eino ChatModel 和用户自带 Key 生成旅行总结",
+		})
 	}
 
-	return model.TripAgentResult{
-		NeedClarification: false,
-		FinalPlan:         finalPlan,
-	}
+	finalPlan.AgentSteps = agentSteps
+}
+
+return model.TripAgentResult{
+	NeedClarification: false,
+	FinalPlan:         finalPlan,
+}
 }
 
 func calculateTotalCost(transportPlans []model.TransportPlan, dailyRoutes []model.DailyRoute) int {
