@@ -4,7 +4,9 @@ import (
 	"fmt"
 
 	"ariadne/internal/model"
+	"ariadne/internal/parser"
 	"ariadne/internal/tools"
+	"ariadne/internal/validator"
 )
 
 type TripAgent struct {
@@ -21,38 +23,66 @@ func NewTripAgent() TripAgent {
 	}
 }
 
-func (a TripAgent) Plan(request model.TripRequest) model.FinalTripPlan {
+func (a TripAgent) Run(message string) model.TripAgentResult {
 	agentSteps := make([]model.AgentStep, 0)
 
-	transportPlans := a.TransportTool.Run(request)
+	tripRequest := parser.ParseTripRequest(message)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    "intent_parser",
+		Description: "解析用户输入，提取出发地、目的地、天数、预算和偏好",
+	})
+
+	questions := validator.CheckTripRequest(tripRequest)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    "request_validator",
+		Description: "检查旅行请求是否完整",
+	})
+
+	if len(questions) > 0 {
+		return model.TripAgentResult{
+			NeedClarification: true,
+			Clarification: model.ClarificationResult{
+				NeedClarification: true,
+				Questions:         questions,
+				AgentSteps:        agentSteps,
+			},
+		}
+	}
+
+	transportPlans := a.TransportTool.Run(tripRequest)
 	agentSteps = append(agentSteps, model.AgentStep{
 		ToolName:    a.TransportTool.Name,
 		Description: "根据出发地、目的地、预算和偏好生成交通方案",
 	})
 
-	attractions := a.AttractionTool.Run(request)
+	attractions := a.AttractionTool.Run(tripRequest)
 	agentSteps = append(agentSteps, model.AgentStep{
 		ToolName:    a.AttractionTool.Name,
 		Description: "根据目的地、旅行天数和用户偏好推荐景点",
 	})
 
-	dailyRoutes := a.RouteTool.Run(request, attractions)
+	dailyRoutes := a.RouteTool.Run(tripRequest, attractions)
 	agentSteps = append(agentSteps, model.AgentStep{
 		ToolName:    a.RouteTool.Name,
 		Description: "根据旅行请求和景点列表生成每日行程路线",
 	})
 
 	totalCost := calculateTotalCost(transportPlans, dailyRoutes)
-	summary := generateSummary(request, totalCost)
+	summary := generateSummary(tripRequest, totalCost)
 
-	return model.FinalTripPlan{
-		Request:            request,
+	finalPlan := model.FinalTripPlan{
+		Request:            tripRequest,
 		TransportPlans:     transportPlans,
 		Attractions:        attractions,
 		DailyRoutes:        dailyRoutes,
 		AgentSteps:         agentSteps,
 		TotalEstimatedCost: totalCost,
 		Summary:            summary,
+	}
+
+	return model.TripAgentResult{
+		NeedClarification: false,
+		FinalPlan:         finalPlan,
 	}
 }
 

@@ -5,7 +5,7 @@ import (
 	"ariadne/internal/model"
 )
 
-func BuildFinalTripPlan(request model.TripRequest) model.FinalTripPlan {
+func RunTripAgent(message string) model.TripAgentResult {
 	tripAgent := agent.NewTripAgent()
-	return tripAgent.Plan(request)
+	return tripAgent.Run(message)
 }

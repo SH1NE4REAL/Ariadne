@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"ariadne/internal/model"
-	"ariadne/internal/parser"
 	"ariadne/internal/service"
 )
 
@@ -42,17 +41,25 @@ func PlanTripHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tripRequest := parser.ParseTripRequest(req.Message)
-	finalPlan := service.BuildFinalTripPlan(tripRequest)
+	agentResult := service.RunTripAgent(req.Message)
+
+	if agentResult.NeedClarification {
+		writeJSON(w, http.StatusOK, model.ApiResponse{
+			Code:    1001,
+			Message: "需要补充旅行信息",
+			Data:    agentResult.Clarification,
+		})
+		return
+	}
 
 	writeJSON(w, http.StatusOK, model.ApiResponse{
 		Code:    0,
 		Message: "success",
-		Data:    finalPlan,
+		Data:    agentResult.FinalPlan,
 	})
-}
+	}
 
-func writeJSON(w http.ResponseWriter, statusCode int, response model.ApiResponse) {
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(response)
+	func writeJSON(w http.ResponseWriter, statusCode int, response model.ApiResponse) {
+		w.WriteHeader(statusCode)
+		json.NewEncoder(w).Encode(response)
 }
