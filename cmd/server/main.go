@@ -1,38 +1,21 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"os"
-	"ariadne/internal/parser"
-	"ariadne/internal/tools"
+	"net/http"
+
+	"ariadne/internal/handler"
 )
 
 func main() {
-	fmt.Println("Ariadne 启动成功")
-	fmt.Println("请输入你的旅行需求：")
+	http.HandleFunc("/api/trip/plan", handler.PlanTripHandler)
 
-	scanner := bufio.NewScanner(os.Stdin)
+	fmt.Println("Ariadne HTTP 服务启动成功")
+	fmt.Println("监听地址：http://localhost:8080")
+	fmt.Println("接口地址：POST http://localhost:8080/api/trip/plan")
 
-	if scanner.Scan() {
-		input := scanner.Text()
-		tripRequest := parser.ParseTripRequest(input)
-		fmt.Printf("当前旅行请求对象：%+v\n", tripRequest)
-		transportPlans := tools.GenerateTransportPlans(tripRequest)
-
-		fmt.Println("交通方案：")
-		for _, plan := range transportPlans {
-			fmt.Printf("- %s：%s，预估价格：%d 元\n", plan.Method, plan.Description, plan.Price)
-			fmt.Println("  预订/查询链接：", plan.BookingLink)
-		}
-
-		recommendedPlan := tools.RecommendTransportPlan(tripRequest, transportPlans)
-
-		fmt.Println()
-		fmt.Println("推荐交通方式：", recommendedPlan.Method)
-		fmt.Println("推荐理由：", recommendedPlan.Reason)
-		fmt.Println("预估价格：", recommendedPlan.Price, "元")
-		fmt.Println("查询链接：", recommendedPlan.BookingLink)
+	err := http.ListenAndServe(":8080", nil)
+	if err != nil {
+		fmt.Println("服务启动失败：", err)
 	}
 }
-	
