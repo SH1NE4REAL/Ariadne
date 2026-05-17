@@ -17,6 +17,7 @@ type TripAgent struct {
 	RouteTool        tools.RouteTool
 	LinkTool         tools.LinkTool
 	PriceCompareTool tools.PriceCompareTool
+	BudgetTool       tools.BudgetTool
 }
 
 func NewTripAgent() TripAgent {
@@ -26,6 +27,7 @@ func NewTripAgent() TripAgent {
 		RouteTool:        tools.NewRouteTool(),
 		LinkTool:         tools.NewLinkTool(),
 		PriceCompareTool: tools.NewPriceCompareTool(),
+		BudgetTool:       tools.NewBudgetTool(),
 	}
 }
 
@@ -124,32 +126,39 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 		Description: "根据旅行请求和景点列表生成每日行程路线",
 	})
 
-	bestBookingOption := a.PriceCompareTool.Run(tripRequest)
-	agentSteps = append(agentSteps, model.AgentStep{
-		ToolName:    a.PriceCompareTool.Name,
-		Description: "根据预算、偏好和候选报价选择综合最优链接",
-	})
-
 	bookingLinks := a.LinkTool.Run(tripRequest)
 	agentSteps = append(agentSteps, model.AgentStep{
 	ToolName:    a.LinkTool.Name,
 	Description: "生成交通、酒店、地图和景点查询跳转链接",
 	})
 
+	bestBookingOption := a.PriceCompareTool.Run(tripRequest)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.PriceCompareTool.Name,
+		Description: "根据预算、偏好和候选报价选择综合最优链接",
+	})
+
+	budgetBreakdown := a.BudgetTool.Run(tripRequest, bestBookingOption)
+	agentSteps = append(agentSteps, model.AgentStep{
+	ToolName:    a.BudgetTool.Name,
+	Description: "根据总预算、天数、偏好和最优交通方案拆分旅行预算",
+	})
+
 	totalCost := calculateTotalCost(transportPlans, dailyRoutes)
 	summary := generateSummary(tripRequest, totalCost)
 
 	finalPlan := model.FinalTripPlan{
-		Request:            tripRequest,
-		TransportPlans:     transportPlans,
-		Attractions:        attractions,
-		DailyRoutes:        dailyRoutes,
-		BookingLinks:       bookingLinks,
-		BestBookingOption:  bestBookingOption,
-		AgentSteps:         agentSteps,
-		TotalEstimatedCost: totalCost,
-		Summary:            summary,
-	}
+	Request:            tripRequest,
+	TransportPlans:     transportPlans,
+	Attractions:        attractions,
+	DailyRoutes:        dailyRoutes,
+	BookingLinks:       bookingLinks,
+	BestBookingOption:  bestBookingOption,
+	BudgetBreakdown:    budgetBreakdown,
+	AgentSteps:         agentSteps,
+	TotalEstimatedCost: totalCost,
+	Summary:            summary,
+}
 	if useLLMParser && llmClient != nil {
 		llmSummary, err := llm.GenerateTripSummaryWithLLM(ctx, finalPlan, llmClient)
 		if err != nil {
