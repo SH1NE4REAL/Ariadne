@@ -23,6 +23,7 @@ type TripAgent struct {
 	RouteDistanceTool  tools.RouteDistanceTool
 	POITool            tools.POITool
 	DistanceMatrixTool tools.DistanceMatrixTool
+	RouteOptimizerTool tools.RouteOptimizerTool
 }
 
 func NewTripAgent() TripAgent {
@@ -38,6 +39,7 @@ func NewTripAgent() TripAgent {
 		RouteDistanceTool:  tools.NewRouteDistanceTool(),
 		POITool:            tools.NewPOITool(),
 		DistanceMatrixTool: tools.NewDistanceMatrixTool(),
+		RouteOptimizerTool: tools.NewRouteOptimizerTool(),
 	}
 }
 
@@ -238,16 +240,16 @@ if routeDistance.Status == "ok" {
 }
 
 if mapConfig.TencentMapKey != "" {
-	dailyRoutes = a.DistanceMatrixTool.Run(dailyRoutes, mapConfig)
+	dailyRoutes = a.RouteOptimizerTool.Run(dailyRoutes, mapConfig)
 
 	agentSteps = append(agentSteps, model.AgentStep{
-		ToolName:    a.DistanceMatrixTool.Name,
-		Description: "使用腾讯距离矩阵计算每日景点之间的真实路面距离和预计时间",
+		ToolName:    a.RouteOptimizerTool.Name,
+		Description: "使用腾讯距离矩阵按最近邻策略优化每日景点顺序，并生成真实路段距离和时间",
 	})
 } else {
 	agentSteps = append(agentSteps, model.AgentStep{
-		ToolName:    a.DistanceMatrixTool.Name,
-		Description: "未提供腾讯位置服务 Key，跳过每日景点间距离矩阵计算",
+		ToolName:    a.RouteOptimizerTool.Name,
+		Description: "未提供腾讯位置服务 Key，跳过每日景点路线优化",
 	})
 }
 
