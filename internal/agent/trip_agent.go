@@ -19,6 +19,7 @@ type TripAgent struct {
 	PriceCompareTool tools.PriceCompareTool
 	BudgetTool       tools.BudgetTool
 	HotelTool        tools.HotelTool
+	GeoTool          tools.GeoTool
 }
 
 func NewTripAgent() TripAgent {
@@ -30,10 +31,12 @@ func NewTripAgent() TripAgent {
 		PriceCompareTool: tools.NewPriceCompareTool(),
 		BudgetTool:       tools.NewBudgetTool(),
 		HotelTool:        tools.NewHotelTool(),
+		GeoTool:          tools.NewGeoTool(),
 	}
 }
 
-func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgentResult {
+func (a TripAgent) Run(message string, llmConfig model.LLMConfig, mapConfig model.MapConfig) model.TripAgentResult {
+	_ = mapConfig
 	ctx := context.Background()
 	agentSteps := make([]model.AgentStep, 0)
 
@@ -110,6 +113,44 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 		}
 	}
 
+	var originLocation model.Location
+var destinationLocation model.Location
+
+if mapConfig.TencentMapKey != "" {
+	origin, err := a.GeoTool.Run(tripRequest.Origin, mapConfig)
+	if err != nil {
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    a.GeoTool.Name,
+			Description: "出发地地理编码失败：" + err.Error(),
+		})
+	} else {
+		originLocation = origin
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    a.GeoTool.Name,
+			Description: "成功解析出发地经纬度：" + tripRequest.Origin,
+		})
+	}
+
+	destination, err := a.GeoTool.Run(tripRequest.Destination, mapConfig)
+	if err != nil {
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    a.GeoTool.Name,
+			Description: "目的地地理编码失败：" + err.Error(),
+		})
+	} else {
+		destinationLocation = destination
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    a.GeoTool.Name,
+			Description: "成功解析目的地经纬度：" + tripRequest.Destination,
+		})
+	}
+} else {
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.GeoTool.Name,
+		Description: "未提供腾讯位置服务 Key，跳过地理编码",
+	})
+}
+
 	transportPlans := a.TransportTool.Run(tripRequest)
 	agentSteps = append(agentSteps, model.AgentStep{
 		ToolName:    a.TransportTool.Name,
@@ -152,21 +193,23 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 		Description: "根据目的地、旅行天数和每晚住宿预算推荐住宿档位",
 	})
 
-	totalCost := calculateTotalCost(transportPlans, dailyRoutes)
+	totalCost := calculateTotalCost(bestBookingOption, dailyRoutes, hotelOptions)
 	summary := generateSummary(tripRequest, totalCost)
 
 	finalPlan := model.FinalTripPlan{
-	Request:            tripRequest,
-	TransportPlans:     transportPlans,
-	Attractions:        attractions,
-	DailyRoutes:        dailyRoutes,
-	BookingLinks:       bookingLinks,
-	BestBookingOption:  bestBookingOption,
-	BudgetBreakdown:    budgetBreakdown,
-	HotelOptions:       hotelOptions,
-	AgentSteps:         agentSteps,
-	TotalEstimatedCost: totalCost,
-	Summary:            summary,
+	Request:             tripRequest,
+	OriginLocation:      originLocation,
+	DestinationLocation: destinationLocation,
+	TransportPlans:      transportPlans,
+	Attractions:         attractions,
+	DailyRoutes:         dailyRoutes,
+	BookingLinks:        bookingLinks,
+	BestBookingOption:   bestBookingOption,
+	BudgetBreakdown:     budgetBreakdown,
+	HotelOptions:        hotelOptions,
+	AgentSteps:          agentSteps,
+	TotalEstimatedCost:  totalCost,
+	Summary:             summary,
 }
 	if useLLMParser && llmClient != nil {
 		llmSummary, err := llm.GenerateTripSummaryWithLLM(ctx, finalPlan, llmClient)
@@ -193,15 +236,19 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgen
 	}
 }
 
-func calculateTotalCost(transportPlans []model.TransportPlan, dailyRoutes []model.DailyRoute) int {
+func calculateTotalCost(bestBookingOption model.BestBookingOption, dailyRoutes []model.DailyRoute, hotelOptions []model.HotelOption) int {
 	total := 0
 
-	if len(transportPlans) > 0 {
-		total += transportPlans[0].Price
+	if bestBookingOption.Best.Price > 0 {
+		total += bestBookingOption.Best.Price
 	}
 
 	for _, route := range dailyRoutes {
 		total += route.EstimatedCost
+	}
+
+	if len(hotelOptions) > 0 {
+		total += hotelOptions[0].TotalPrice
 	}
 
 	return total
@@ -209,16 +256,16 @@ func calculateTotalCost(transportPlans []model.TransportPlan, dailyRoutes []mode
 
 func generateSummary(request model.TripRequest, totalCost int) string {
 	if request.Budget > 0 && totalCost > request.Budget {
-		return fmt.Sprintf("当前方案预估花费约 %d 元，可能超过你的预算 %d 元，建议减少高消费项目或选择更经济的交通方式。", totalCost, request.Budget)
+		return fmt.Sprintf("当前方案预估总花费约 %d 元，可能超过你的预算 %d 元，建议降低住宿档位、减少付费景点或选择更经济的交通方式。", totalCost, request.Budget)
 	}
 
 	if request.Preference == "轻松" {
-		return fmt.Sprintf("当前方案预估花费约 %d 元，整体节奏较轻松，适合不想太赶的旅行。", totalCost)
+		return fmt.Sprintf("当前方案预估总花费约 %d 元，已综合推荐交通、住宿和景点安排，整体节奏较轻松，适合不想太赶的旅行。", totalCost)
 	}
 
 	if request.Preference == "省钱" {
-		return fmt.Sprintf("当前方案预估花费约 %d 元，已尽量控制景点和交通成本。", totalCost)
+		return fmt.Sprintf("当前方案预估总花费约 %d 元，已根据省钱偏好优先控制交通和住宿成本。", totalCost)
 	}
 
-	return fmt.Sprintf("当前方案预估花费约 %d 元，可作为初版旅行计划参考。", totalCost)
+	return fmt.Sprintf("当前方案预估总花费约 %d 元，可作为初版旅行计划参考。", totalCost)
 }

@@ -5,7 +5,7 @@ import (
 	"ariadne/internal/model"
 )
 
-func RunTripAgent(message string, llmConfig model.LLMConfig) model.TripAgentResult {
+func RunTripAgent(message string, llmConfig model.LLMConfig, mapConfig model.MapConfig) model.TripAgentResult {
 	tripAgent := agent.NewTripAgent()
-	return tripAgent.Run(message, llmConfig)
+	return tripAgent.Run(message, llmConfig, mapConfig)
 }
