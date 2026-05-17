@@ -25,9 +25,29 @@ func NewPOITool() POITool {
 }
 
 func (t POITool) Run(request model.TripRequest, mapConfig model.MapConfig) []model.Attraction {
-	attractions, err := SearchAttractionsWithTencent(request.Destination, mapConfig)
-	if err != nil {
-		return []model.Attraction{}
+	keywords := buildPOIKeywords(request)
+
+	attractions := make([]model.Attraction, 0)
+	seen := make(map[string]bool)
+
+	for _, keyword := range keywords {
+		results, err := SearchPOIsWithTencent(request.Destination, keyword, mapConfig)
+		if err != nil {
+			continue
+		}
+
+		for _, attraction := range results {
+			if seen[attraction.Name] {
+				continue
+			}
+
+			seen[attraction.Name] = true
+			attractions = append(attractions, attraction)
+
+			if len(attractions) >= 8 {
+				return attractions
+			}
+		}
 	}
 
 	return attractions
@@ -49,7 +69,7 @@ type tencentPlaceSearchResponse struct {
 	} `json:"data"`
 }
 
-func SearchAttractionsWithTencent(destination string, mapConfig model.MapConfig) ([]model.Attraction, error) {
+func SearchPOIsWithTencent(destination string, keyword string, mapConfig model.MapConfig) ([]model.Attraction, error){
 	if mapConfig.TencentMapKey == "" {
 		return nil, errors.New("tencent map key is empty")
 	}
@@ -62,7 +82,7 @@ func SearchAttractionsWithTencent(destination string, mapConfig model.MapConfig)
 
 	query := url.Values{}
 	query.Set("boundary", fmt.Sprintf("region(%s,0)", destination))
-	query.Set("keyword", "景点")
+	query.Set("keyword", keyword)
 	query.Set("page_size", "8")
 	query.Set("page_index", "1")
 	query.Set("output", "json")
@@ -104,7 +124,7 @@ func SearchAttractionsWithTencent(destination string, mapConfig model.MapConfig)
 			Name:          item.Title,
 			Category:      item.Category,
 			Address:       item.Address,
-			Description:   buildPOIDescription(item.Title, item.Category, item.Address),
+			Description: buildPOIDescription(item.Title, item.Category, item.Address, keyword),
 			EstimatedCost: 0,
 			VisitTime:     "建议根据现场情况安排",
 			Link:          buildTencentMapSearchLink(item.Title),
@@ -119,22 +139,37 @@ func SearchAttractionsWithTencent(destination string, mapConfig model.MapConfig)
 	return attractions, nil
 }
 
-func buildPOIDescription(name string, category string, address string) string {
+func buildPOIDescription(name string, category string, address string, keyword string) string {
 	if category != "" && address != "" {
-		return fmt.Sprintf("%s，类型：%s，地址：%s。", name, category, address)
+		return fmt.Sprintf("%s，搜索关键词：%s，类型：%s，地址：%s。", name, keyword, category, address)
 	}
 
 	if category != "" {
-		return fmt.Sprintf("%s，类型：%s。", name, category)
+		return fmt.Sprintf("%s，搜索关键词：%s，类型：%s。", name, keyword, category)
 	}
 
 	if address != "" {
-		return fmt.Sprintf("%s，地址：%s。", name, address)
+		return fmt.Sprintf("%s，搜索关键词：%s，地址：%s。", name, keyword, address)
 	}
 
-	return name
+	return fmt.Sprintf("%s，搜索关键词：%s。", name, keyword)
 }
 
 func buildTencentMapSearchLink(keyword string) string {
 	return "https://map.qq.com/?type=search&query=" + url.QueryEscape(keyword)
+}
+
+func buildPOIKeywords(request model.TripRequest) []string {
+	switch request.Preference {
+	case "美食":
+		return []string{"美食", "小吃", "商圈", "夜市"}
+	case "拍照":
+		return []string{"地标", "景点", "公园", "步行街"}
+	case "省钱":
+		return []string{"公园", "免费景点", "街区", "博物馆"}
+	case "轻松":
+		return []string{"公园", "景点", "商圈", "博物馆"}
+	default:
+		return []string{"景点", "公园", "商圈"}
+	}
 }
