@@ -23,14 +23,37 @@ func NewTripAgent() TripAgent {
 	}
 }
 
-func (a TripAgent) Run(message string) model.TripAgentResult {
+func (a TripAgent) Run(message string, llmConfig model.LLMConfig) model.TripAgentResult {
 	agentSteps := make([]model.AgentStep, 0)
 
+	useLLMParser := isLLMConfigComplete(llmConfig)
+
+	if useLLMParser {
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    "llm_config_checker",
+			Description: "检测到完整 LLM 配置，后续可使用用户自带 Key 进行智能解析",
+		})
+	} else {
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    "llm_config_checker",
+			Description: "未检测到完整 LLM 配置，当前使用规则解析器进行基础解析",
+		})
+	}
+
 	tripRequest := parser.ParseTripRequest(message)
-	agentSteps = append(agentSteps, model.AgentStep{
-		ToolName:    "intent_parser",
-		Description: "解析用户输入，提取出发地、目的地、天数、预算和偏好",
-	})
+
+	if useLLMParser {
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    "llm_parser_placeholder",
+			Description: "当前版本尚未接入 Eino 模型解析，暂时回退到规则解析器",
+		})
+	} else {
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    "rule_parser",
+			Description: "使用正则和关键词规则解析用户输入，提取出发地、目的地、天数、预算和偏好",
+		})
+	}
+	
 
 	questions := validator.CheckTripRequest(tripRequest)
 	agentSteps = append(agentSteps, model.AgentStep{
@@ -114,4 +137,8 @@ func generateSummary(request model.TripRequest, totalCost int) string {
 	}
 
 	return fmt.Sprintf("当前方案预估花费约 %d 元，可作为初版旅行计划参考。", totalCost)
+}
+
+func isLLMConfigComplete(config model.LLMConfig) bool {
+	return config.APIKey != "" && config.Model != "" && config.BaseURL != ""
 }

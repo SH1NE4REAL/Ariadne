@@ -41,7 +41,7 @@ func PlanTripHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentResult := service.RunTripAgent(req.Message)
+	agentResult := service.RunTripAgent(req.Message, req.LLMConfig)
 
 	if agentResult.NeedClarification {
 		writeJSON(w, http.StatusOK, model.ApiResponse{

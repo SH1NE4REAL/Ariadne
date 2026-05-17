@@ -1,7 +1,8 @@
 package model
 
 type TripPlanRequest struct {
-	Message string `json:"message"`
+	Message   string    `json:"message"`
+	LLMConfig LLMConfig `json:"llm_config"`
 }
 
 type ApiResponse struct {
