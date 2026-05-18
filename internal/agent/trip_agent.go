@@ -29,6 +29,7 @@ type TripAgent struct {
 	FlyAIPoiTool 		tools.FlyAIPoiTool
 	FlyAIFlightTool tools.FlyAIFlightTool
 	RouteFeasibilityTool tools.RouteFeasibilityTool
+	TravelTimeWindowTool tools.TravelTimeWindowTool
 }
 
 func NewTripAgent() TripAgent {
@@ -50,6 +51,7 @@ func NewTripAgent() TripAgent {
 		FlyAIPoiTool: 		tools.NewFlyAIPoiTool(),
 		FlyAIFlightTool: tools.NewFlyAIFlightTool(),
 		RouteFeasibilityTool: tools.NewRouteFeasibilityTool(),
+		TravelTimeWindowTool: tools.NewTravelTimeWindowTool(),
 	}
 }
 
@@ -290,7 +292,7 @@ if mapConfig.TencentMapKey != "" {
 		ToolName:    a.RouteOptimizerTool.Name,
 		Description: "使用腾讯距离矩阵按最近邻策略优化每日景点顺序，并生成真实路段距离和时间",
 	})
-	
+
 	dailyRoutes = a.RouteFeasibilityTool.Run(tripRequest, dailyRoutes)
 	agentSteps = append(agentSteps, model.AgentStep{
 		ToolName:    a.RouteFeasibilityTool.Name,
@@ -317,6 +319,12 @@ if mapConfig.TencentMapKey != "" {
 		recommendedReturnTrainOffer,
 		recommendedFlightOffer,
 	)
+
+	dailyRoutes = a.TravelTimeWindowTool.Run(tripRequest, dailyRoutes, tripRecommendation)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.TravelTimeWindowTool.Name,
+		Description: "根据推荐交通方案的到达和返程时间调整首日、末日行程强度",
+	})
 
 	totalCost := tripRecommendation.TotalRealCost
 	summary := generateSummary(tripRequest, totalCost)
