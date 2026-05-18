@@ -39,6 +39,7 @@ func buildTripSummarySystemPrompt() string {
 8. route_distance 如果 status 为 ok，则表示来自腾讯位置服务的真实路线规划结果；distance_meters 为路线距离米，duration_minutes 为路线预计时间分钟。
 9. daily_routes.route_segments 如果存在且 status 为 ok，表示景点之间的真实路面距离和预计时间来自腾讯距离矩阵 API。
 10. daily_routes.optimized 如果为 true，表示当天景点顺序已经根据腾讯距离矩阵进行过简单路线优化。
+11.如果 hotel_offers 中存在 status 为 ok 的结果，表示住宿价格来自 FlyAI / 飞猪真实酒店商品；总结时应优先参考 hotel_offers，而不是 hotel_options。
 
 输出要求：
 1. 只返回一段中文总结。

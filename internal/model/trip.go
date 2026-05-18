@@ -8,4 +8,7 @@ type TripRequest struct {
 	Budget               int    `json:"budget"`
 	Preference           string `json:"preference"`
 	TransportPreference  string `json:"transport_preference"`
+	LocalTransportMode    string `json:"local_transport_mode"`
+	StartDate            string `json:"start_date"`
+	EndDate              string `json:"end_date"`
 }

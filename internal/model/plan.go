@@ -12,6 +12,7 @@ type FinalTripPlan struct {
 	BestBookingOption   BestBookingOption `json:"best_booking_option"`
 	BudgetBreakdown     BudgetBreakdown   `json:"budget_breakdown"`
 	HotelOptions        []HotelOption     `json:"hotel_options"`
+	HotelOffers 		[]HotelOffer 	  `json:"hotel_offers"`
 	AgentSteps          []AgentStep       `json:"agent_steps"`
 	TotalEstimatedCost  int               `json:"total_estimated_cost"`
 	Summary             string            `json:"summary"`

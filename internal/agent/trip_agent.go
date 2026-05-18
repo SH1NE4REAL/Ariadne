@@ -24,6 +24,7 @@ type TripAgent struct {
 	POITool            tools.POITool
 	DistanceMatrixTool tools.DistanceMatrixTool
 	RouteOptimizerTool tools.RouteOptimizerTool
+	FlyAIHotelTool     tools.FlyAIHotelTool
 }
 
 func NewTripAgent() TripAgent {
@@ -40,6 +41,7 @@ func NewTripAgent() TripAgent {
 		POITool:            tools.NewPOITool(),
 		DistanceMatrixTool: tools.NewDistanceMatrixTool(),
 		RouteOptimizerTool: tools.NewRouteOptimizerTool(),
+		FlyAIHotelTool:     tools.NewFlyAIHotelTool(),
 	}
 }
 
@@ -219,6 +221,12 @@ if mapConfig.TencentMapKey != "" {
 		Description: "根据目的地、旅行天数和每晚住宿预算推荐住宿档位",
 	})
 
+	hotelOffers := a.FlyAIHotelTool.Run(tripRequest, budgetBreakdown, attractions)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.FlyAIHotelTool.Name,
+		Description: "使用 FlyAI / 飞猪真实酒店商品数据搜索酒店报价",
+	})
+
 	routeDistance := a.RouteDistanceTool.Run(
 	tripRequest.Origin,
 	tripRequest.Destination,
@@ -253,7 +261,7 @@ if mapConfig.TencentMapKey != "" {
 	})
 }
 
-	totalCost := calculateTotalCost(bestBookingOption, dailyRoutes, hotelOptions)
+	totalCost := calculateTotalCost(bestBookingOption, dailyRoutes, hotelOptions, hotelOffers)
 	summary := generateSummary(tripRequest, totalCost)
 
 	finalPlan := model.FinalTripPlan{
@@ -271,6 +279,7 @@ if mapConfig.TencentMapKey != "" {
 	AgentSteps:          agentSteps,
 	TotalEstimatedCost:  totalCost,
 	Summary:             summary,
+	HotelOffers:         hotelOffers,
 	
 }
 	if useLLMParser && llmClient != nil {
@@ -298,7 +307,12 @@ if mapConfig.TencentMapKey != "" {
 	}
 }
 
-func calculateTotalCost(bestBookingOption model.BestBookingOption, dailyRoutes []model.DailyRoute, hotelOptions []model.HotelOption) int {
+func calculateTotalCost(
+	bestBookingOption model.BestBookingOption,
+	dailyRoutes []model.DailyRoute,
+	hotelOptions []model.HotelOption,
+	hotelOffers []model.HotelOffer,
+) int {
 	total := 0
 
 	if bestBookingOption.Best.Price > 0 {
@@ -309,11 +323,24 @@ func calculateTotalCost(bestBookingOption model.BestBookingOption, dailyRoutes [
 		total += route.EstimatedCost
 	}
 
-	if len(hotelOptions) > 0 {
-		total += hotelOptions[0].TotalPrice
-	}
+	hotelCost := getHotelCost(hotelOptions, hotelOffers)
+	total += hotelCost
 
 	return total
+}
+
+func getHotelCost(hotelOptions []model.HotelOption, hotelOffers []model.HotelOffer) int {
+	for _, offer := range hotelOffers {
+		if offer.Status == "ok" && offer.TotalPrice > 0 {
+			return offer.TotalPrice
+		}
+	}
+
+	if len(hotelOptions) > 0 {
+		return hotelOptions[0].TotalPrice
+	}
+
+	return 0
 }
 
 func generateSummary(request model.TripRequest, totalCost int) string {
