@@ -53,3 +53,4 @@ func (c *LLMClient) Generate(ctx context.Context, systemPrompt string, userMessa
 
 	return strings.TrimSpace(resp.Content), nil
 }
+

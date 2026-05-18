@@ -450,3 +450,169 @@ func (c Client) SearchPOIs(
 
 	return offers, nil
 }
+
+type flightSearchResponse struct {
+	Status  int    `json:"status"`
+	Message string `json:"message"`
+	Data    struct {
+		ItemList []flightItem `json:"itemList"`
+	} `json:"data"`
+}
+
+type flightItem struct {
+	Journeys      []flightJourney `json:"journeys"`
+	JumpURL       string          `json:"jumpUrl"`
+	TicketPrice   string          `json:"ticketPrice"`
+	TotalDuration string          `json:"totalDuration"`
+}
+
+type flightJourney struct {
+	JourneyType      string          `json:"journeyType"`
+	Segments         []flightSegment `json:"segments"`
+	TotalDuration    string          `json:"totalDuration"`
+	TransferDuration string          `json:"transferDuration"`
+}
+
+type flightSegment struct {
+	ArrCityName            string `json:"arrCityName"`
+	ArrDateTime            string `json:"arrDateTime"`
+	ArrStationName         string `json:"arrStationName"`
+	ArrTerm                string `json:"arrTerm"`
+	DepCityName            string `json:"depCityName"`
+	DepDateTime            string `json:"depDateTime"`
+	DepStationName         string `json:"depStationName"`
+	DepTerm                string `json:"depTerm"`
+	Duration               string `json:"duration"`
+	MarketingTransportName string `json:"marketingTransportName"`
+	MarketingTransportNo   string `json:"marketingTransportNo"`
+	SeatClassName          string `json:"seatClassName"`
+	TransportType          string `json:"transportType"`
+}
+
+func (c Client) SearchFlights(
+	ctx context.Context,
+	origin string,
+	destination string,
+	depDate string,
+	backDate string,
+	seatClassName string,
+	maxPrice int,
+) ([]model.FlightOffer, error) {
+	if origin == "" {
+		return nil, errors.New("origin is empty")
+	}
+
+	if destination == "" {
+		return nil, errors.New("destination is empty")
+	}
+
+	if depDate == "" {
+		return nil, errors.New("flight departure date is empty")
+	}
+
+	args := []string{
+		"search-flight",
+		"--origin", origin,
+		"--destination", destination,
+		"--dep-date", depDate,
+		"--sort-type", "3",
+	}
+
+	if backDate != "" {
+		args = append(args, "--back-date", backDate)
+	}
+
+	if seatClassName != "" {
+		args = append(args, "--seat-class-name", seatClassName)
+	}
+
+	if maxPrice > 0 {
+		args = append(args, "--max-price", strconv.Itoa(maxPrice))
+	}
+
+	cmdCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(cmdCtx, c.Command, args...)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+
+	rawOutput := strings.TrimSpace(stdout.String())
+	if rawOutput == "" {
+		if err != nil {
+			return nil, errors.New("flyai flight command failed: " + err.Error() + "; stderr: " + stderr.String())
+		}
+		return nil, errors.New("flyai flight returned empty output")
+	}
+
+	jsonText := extractFirstJSON(rawOutput)
+
+	var resp flightSearchResponse
+	if jsonErr := json.Unmarshal([]byte(jsonText), &resp); jsonErr != nil {
+		return nil, jsonErr
+	}
+
+	if resp.Status != 0 {
+		return nil, errors.New("flyai flight search failed: " + resp.Message)
+	}
+
+	offers := make([]model.FlightOffer, 0)
+
+	for _, item := range resp.Data.ItemList {
+		offer := model.FlightOffer{
+			Provider:             "fliggy",
+			Price:                parseCNYPrice(item.TicketPrice),
+			TotalDurationMinutes: parseInt(item.TotalDuration),
+			BookingLink:          item.JumpURL,
+			DataSource:           "flyai_fliggy",
+			Status:               "ok",
+			Message:              "query ok",
+		}
+
+		journeys := make([]model.FlightJourney, 0)
+
+		for journeyIndex, journey := range item.Journeys {
+			direction := "outbound"
+			if journeyIndex == 1 {
+				direction = "return"
+			}
+
+			segments := make([]model.FlightSegment, 0)
+
+			for _, segment := range journey.Segments {
+				segments = append(segments, model.FlightSegment{
+					FlightNo:        segment.MarketingTransportNo,
+					Airline:         segment.MarketingTransportName,
+					SeatClassName:   segment.SeatClassName,
+					DepCityName:     segment.DepCityName,
+					DepAirportName:  segment.DepStationName,
+					DepTerminal:     segment.DepTerm,
+					DepDateTime:     segment.DepDateTime,
+					ArrCityName:     segment.ArrCityName,
+					ArrAirportName:  segment.ArrStationName,
+					ArrTerminal:     segment.ArrTerm,
+					ArrDateTime:     segment.ArrDateTime,
+					DurationMinutes: parseInt(segment.Duration),
+				})
+			}
+
+			journeys = append(journeys, model.FlightJourney{
+				Direction:            direction,
+				JourneyType:          journey.JourneyType,
+				TotalDurationMinutes: parseInt(journey.TotalDuration),
+				Segments:             segments,
+			})
+		}
+
+		offer.Journeys = journeys
+		offers = append(offers, offer)
+	}
+
+	return offers, nil
+}

@@ -27,6 +27,7 @@ type TripAgent struct {
 	FlyAIHotelTool     tools.FlyAIHotelTool
 	FlyAITrainTool     tools.FlyAITrainTool
 	FlyAIPoiTool 		tools.FlyAIPoiTool
+	FlyAIFlightTool tools.FlyAIFlightTool
 }
 
 func NewTripAgent() TripAgent {
@@ -46,6 +47,7 @@ func NewTripAgent() TripAgent {
 		FlyAIHotelTool:     tools.NewFlyAIHotelTool(),
 		FlyAITrainTool:     tools.NewFlyAITrainTool(),
 		FlyAIPoiTool: 		tools.NewFlyAIPoiTool(),
+		FlyAIFlightTool: tools.NewFlyAIFlightTool(),
 	}
 }
 
@@ -250,6 +252,15 @@ if mapConfig.TencentMapKey != "" {
 		Description: "使用 FlyAI / 飞猪真实火车票数据搜索车次和票价",
 	})
 
+	flightOffers := a.FlyAIFlightTool.Run(tripRequest)
+
+	recommendedFlightOffer := selectRecommendedFlightOffer(tripRequest, flightOffers)
+
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.FlyAIFlightTool.Name,
+		Description: "使用 FlyAI / 飞猪真实机票数据搜索航班和票价",
+	})
+
 	routeDistance := a.RouteDistanceTool.Run(
 	tripRequest.Origin,
 	tripRequest.Destination,
@@ -291,9 +302,11 @@ if mapConfig.TencentMapKey != "" {
 	})
 
 	totalCost := calculateTotalCost(
-		hotelOffers,
-		recommendedOutboundTrainOffer,
-		recommendedReturnTrainOffer,
+	tripRequest,
+	hotelOffers,
+	recommendedOutboundTrainOffer,
+	recommendedReturnTrainOffer,
+	recommendedFlightOffer,
 	)
 	summary := generateSummary(tripRequest, totalCost)
 
@@ -320,6 +333,8 @@ if mapConfig.TencentMapKey != "" {
 	RecommendedOutboundTrainOffer: recommendedOutboundTrainOffer,
 	RecommendedReturnTrainOffer:   recommendedReturnTrainOffer,
 	PoiOffers: poiOffers,
+	FlightOffers:           flightOffers,
+	RecommendedFlightOffer: recommendedFlightOffer,
 }
 	if useLLMParser && llmClient != nil {
 		llmSummary, err := llm.GenerateTripSummaryWithLLM(ctx, finalPlan, llmClient)
@@ -347,9 +362,11 @@ if mapConfig.TencentMapKey != "" {
 }
 
 func calculateTotalCost(
+	request model.TripRequest,
 	hotelOffers []model.HotelOffer,
 	recommendedOutboundTrainOffer model.TrainOffer,
 	recommendedReturnTrainOffer model.TrainOffer,
+	recommendedFlightOffer model.FlightOffer,
 ) int {
 	total := 0
 
@@ -358,6 +375,13 @@ func calculateTotalCost(
 			total += offer.TotalPrice
 			break
 		}
+	}
+
+	if request.TransportPreference == "飞机" {
+		if recommendedFlightOffer.Status == "ok" && recommendedFlightOffer.Price > 0 {
+			total += recommendedFlightOffer.Price
+		}
+		return total
 	}
 
 	if recommendedOutboundTrainOffer.Status == "ok" && recommendedOutboundTrainOffer.Price > 0 {
@@ -481,5 +505,57 @@ func isBetterTrainOffer(request model.TripRequest, current model.TrainOffer, bes
 	}
 
 	// 默认：价格更低优先
+	return current.Price < best.Price
+}
+
+func selectRecommendedFlightOffer(request model.TripRequest, flightOffers []model.FlightOffer) model.FlightOffer {
+	candidates := make([]model.FlightOffer, 0)
+
+	for _, offer := range flightOffers {
+		if offer.Status != "ok" || offer.Price <= 0 {
+			continue
+		}
+
+		candidates = append(candidates, offer)
+	}
+
+	if len(candidates) == 0 {
+		return model.FlightOffer{
+			Provider:   "fliggy",
+			DataSource: "flyai_fliggy",
+			Status:     "unavailable",
+			Message:    "没有找到可用的真实机票结果。",
+		}
+	}
+
+	best := candidates[0]
+
+	for _, offer := range candidates[1:] {
+		if isBetterFlightOffer(request, offer, best) {
+			best = offer
+		}
+	}
+
+	return best
+}
+
+func isBetterFlightOffer(request model.TripRequest, current model.FlightOffer, best model.FlightOffer) bool {
+	// 轻松：优先总时长短，再看价格
+	if request.Preference == "轻松" {
+		if current.TotalDurationMinutes > 0 && best.TotalDurationMinutes > 0 {
+			if current.TotalDurationMinutes < best.TotalDurationMinutes {
+				return true
+			}
+		}
+
+		return current.Price < best.Price
+	}
+
+	// 省钱：优先低价
+	if request.Preference == "省钱" {
+		return current.Price < best.Price
+	}
+
+	// 默认：优先低价
 	return current.Price < best.Price
 }

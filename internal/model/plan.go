@@ -15,11 +15,13 @@ type FinalTripPlan struct {
 	HotelOffers 		[]HotelOffer 	  `json:"hotel_offers"`
 	TrainOffers 		[]TrainOffer 	  `json:"train_offers"`
 	PoiOffers 			[]PoiOffer 		  `json:"poi_offers"`
+	FlightOffers            []FlightOffer `json:"flight_offers"`
 	RecommendedTrainOffer TrainOffer `json:"recommended_train_offer"`
 	OutboundTrainOffers           []TrainOffer `json:"outbound_train_offers"`
 	ReturnTrainOffers             []TrainOffer `json:"return_train_offers"`
 	RecommendedOutboundTrainOffer TrainOffer   `json:"recommended_outbound_train_offer"`
 	RecommendedReturnTrainOffer   TrainOffer   `json:"recommended_return_train_offer"`
+	RecommendedFlightOffer  FlightOffer   `json:"recommended_flight_offer"`
 	AgentSteps          []AgentStep       `json:"agent_steps"`
 	TotalEstimatedCost  int               `json:"total_estimated_cost"`
 	Summary             string            `json:"summary"`
