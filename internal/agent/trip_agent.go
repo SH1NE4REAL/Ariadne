@@ -229,8 +229,20 @@ if mapConfig.TencentMapKey != "" {
 		Description: "使用 FlyAI / 飞猪真实酒店商品数据搜索酒店报价",
 	})
 
-	trainOffers := a.FlyAITrainTool.Run(tripRequest)
-	recommendedTrainOffer := selectRecommendedTrainOffer(tripRequest, trainOffers)
+	outboundTrainOffers := a.FlyAITrainTool.RunOutbound(tripRequest)
+	recommendedOutboundTrainOffer := selectRecommendedTrainOffer(tripRequest, outboundTrainOffers, "outbound")
+
+	returnTrainOffers := a.FlyAITrainTool.RunReturn(tripRequest)
+	recommendedReturnTrainOffer := selectRecommendedTrainOffer(tripRequest, returnTrainOffers, "return")
+
+	// 兼容旧字段：train_offers 先继续等于去程结果
+	trainOffers := outboundTrainOffers
+	recommendedTrainOffer := recommendedOutboundTrainOffer
+
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.FlyAITrainTool.Name,
+		Description: "使用 FlyAI / 飞猪真实火车票数据搜索去程和返程车次与票价",
+	})
 	agentSteps = append(agentSteps, model.AgentStep{
 		ToolName:    a.FlyAITrainTool.Name,
 		Description: "使用 FlyAI / 飞猪真实火车票数据搜索车次和票价",
@@ -270,7 +282,11 @@ if mapConfig.TencentMapKey != "" {
 	})
 }
 
-	totalCost := calculateTotalCost(hotelOffers, recommendedTrainOffer)
+	totalCost := calculateTotalCost(
+		hotelOffers,
+		recommendedOutboundTrainOffer,
+		recommendedReturnTrainOffer,
+	)
 	summary := generateSummary(tripRequest, totalCost)
 
 	finalPlan := model.FinalTripPlan{
@@ -290,7 +306,11 @@ if mapConfig.TencentMapKey != "" {
 	Summary:             summary,
 	HotelOffers:         hotelOffers,
 	TrainOffers:         trainOffers,
-	RecommendedTrainOffer: recommendedTrainOffer,
+	RecommendedTrainOffer:         recommendedTrainOffer,
+	OutboundTrainOffers:           outboundTrainOffers,
+	ReturnTrainOffers:             returnTrainOffers,
+	RecommendedOutboundTrainOffer: recommendedOutboundTrainOffer,
+	RecommendedReturnTrainOffer:   recommendedReturnTrainOffer,
 }
 	if useLLMParser && llmClient != nil {
 		llmSummary, err := llm.GenerateTripSummaryWithLLM(ctx, finalPlan, llmClient)
@@ -317,7 +337,11 @@ if mapConfig.TencentMapKey != "" {
 	}
 }
 
-func calculateTotalCost(hotelOffers []model.HotelOffer, recommendedTrainOffer model.TrainOffer) int {
+func calculateTotalCost(
+	hotelOffers []model.HotelOffer,
+	recommendedOutboundTrainOffer model.TrainOffer,
+	recommendedReturnTrainOffer model.TrainOffer,
+) int {
 	total := 0
 
 	for _, offer := range hotelOffers {
@@ -327,8 +351,12 @@ func calculateTotalCost(hotelOffers []model.HotelOffer, recommendedTrainOffer mo
 		}
 	}
 
-	if recommendedTrainOffer.Status == "ok" && recommendedTrainOffer.Price > 0 {
-		total += recommendedTrainOffer.Price
+	if recommendedOutboundTrainOffer.Status == "ok" && recommendedOutboundTrainOffer.Price > 0 {
+		total += recommendedOutboundTrainOffer.Price
+	}
+
+	if recommendedReturnTrainOffer.Status == "ok" && recommendedReturnTrainOffer.Price > 0 {
+		total += recommendedReturnTrainOffer.Price
 	}
 
 	return total
@@ -363,7 +391,7 @@ func generateSummary(request model.TripRequest, totalCost int) string {
 
 	return fmt.Sprintf("当前方案预估总花费约 %d 元，可作为初版旅行计划参考。", totalCost)
 }
-func selectRecommendedTrainOffer(request model.TripRequest, trainOffers []model.TrainOffer) model.TrainOffer {
+func selectRecommendedTrainOffer(request model.TripRequest, trainOffers []model.TrainOffer, direction string) model.TrainOffer {
 	candidates := make([]model.TrainOffer, 0)
 
 	for _, offer := range trainOffers {
@@ -383,6 +411,7 @@ func selectRecommendedTrainOffer(request model.TripRequest, trainOffers []model.
 	if len(candidates) == 0 {
 		return model.TrainOffer{
 			Provider:   "fliggy",
+			Direction:  direction,
 			DataSource: "flyai_fliggy",
 			Status:     "unavailable",
 			Message:    "没有找到符合用户交通偏好的真实火车票结果。",

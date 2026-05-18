@@ -22,10 +22,41 @@ func NewFlyAITrainTool() FlyAITrainTool {
 }
 
 func (t FlyAITrainTool) Run(request model.TripRequest) []model.TrainOffer {
-	if request.StartDate == "" {
+	return t.RunOutbound(request)
+}
+
+func (t FlyAITrainTool) RunOutbound(request model.TripRequest) []model.TrainOffer {
+	return t.searchTrainOffers(
+		request,
+		request.Origin,
+		request.Destination,
+		request.StartDate,
+		"outbound",
+	)
+}
+
+func (t FlyAITrainTool) RunReturn(request model.TripRequest) []model.TrainOffer {
+	return t.searchTrainOffers(
+		request,
+		request.Destination,
+		request.Origin,
+		request.EndDate,
+		"return",
+	)
+}
+
+func (t FlyAITrainTool) searchTrainOffers(
+	request model.TripRequest,
+	origin string,
+	destination string,
+	depDate string,
+	direction string,
+) []model.TrainOffer {
+	if depDate == "" {
 		return []model.TrainOffer{
 			{
 				Provider:   "fliggy",
+				Direction:  direction,
 				DataSource: "flyai_fliggy",
 				Status:     "unavailable",
 				Message:    "缺少出发日期，无法查询真实火车票价格。",
@@ -33,13 +64,14 @@ func (t FlyAITrainTool) Run(request model.TripRequest) []model.TrainOffer {
 		}
 	}
 
+	// 先不传 seatClassName，避免 FlyAI 因英文座席参数返回空结果。
 	seatClassName := ""
 
 	offers, err := t.Client.SearchTrains(
 		context.Background(),
-		request.Origin,
-		request.Destination,
-		request.StartDate,
+		origin,
+		destination,
+		depDate,
 		seatClassName,
 		0,
 	)
@@ -48,11 +80,16 @@ func (t FlyAITrainTool) Run(request model.TripRequest) []model.TrainOffer {
 		return []model.TrainOffer{
 			{
 				Provider:   "fliggy",
+				Direction:  direction,
 				DataSource: "flyai_fliggy",
 				Status:     "unavailable",
 				Message:    err.Error(),
 			},
 		}
+	}
+
+	for i := range offers {
+		offers[i].Direction = direction
 	}
 
 	return offers
@@ -66,3 +103,4 @@ func chooseTrainSeatClass(request model.TripRequest) string {
 
 	return "second class"
 }
+

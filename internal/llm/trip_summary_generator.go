@@ -44,6 +44,9 @@ func buildTripSummarySystemPrompt() string {
 13.不要引用 transport_plans 中的旧模拟价格；真实交通结果应优先参考 train_offers。
 14.如果 recommended_train_offer.status 为 ok，总结交通方案时必须优先使用 recommended_train_offer，而不是 train_offers 的第一个元素。
 15.如果用户 transport_preference 为“高铁”，不要推荐普快、硬座等不符合偏好的车次，除非没有可用高铁/动车结果，并且必须明确说明。
+16.如果 recommended_outbound_train_offer.status 为 ok，总结去程交通时优先使用它。
+17.如果 recommended_return_train_offer.status 为 ok，总结返程交通时优先使用它。
+18.total_estimated_cost 当前应理解为：真实酒店报价 + 推荐去程火车票 + 推荐返程火车票；不应使用 transport_plans 的旧模拟数据。
 
 输出要求：
 1. 只返回一段中文总结。

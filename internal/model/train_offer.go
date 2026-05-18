@@ -26,4 +26,5 @@ type TrainOffer struct {
 	DataSource           string         `json:"data_source"`
 	Status               string         `json:"status"`
 	Message              string         `json:"message"`
+	Direction 			 string 		`json:"direction"`
 }
