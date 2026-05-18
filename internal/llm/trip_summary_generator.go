@@ -40,6 +40,8 @@ func buildTripSummarySystemPrompt() string {
 9. daily_routes.route_segments 如果存在且 status 为 ok，表示景点之间的真实路面距离和预计时间来自腾讯距离矩阵 API。
 10. daily_routes.optimized 如果为 true，表示当天景点顺序已经根据腾讯距离矩阵进行过简单路线优化。
 11.如果 hotel_offers 中存在 status 为 ok 的结果，表示住宿价格来自 FlyAI / 飞猪真实酒店商品；总结时应优先参考 hotel_offers，而不是 hotel_options。
+12.如果 train_offers 中存在 status 为 ok 的结果，表示火车票价格和车次来自 FlyAI / 飞猪真实票务数据；总结时可以引用 train_offers 的车次、价格、出发到达时间和 booking_link。
+13.不要引用 transport_plans 中的旧模拟价格；真实交通结果应优先参考 train_offers。
 
 输出要求：
 1. 只返回一段中文总结。

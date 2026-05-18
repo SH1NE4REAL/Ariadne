@@ -25,6 +25,7 @@ type TripAgent struct {
 	DistanceMatrixTool tools.DistanceMatrixTool
 	RouteOptimizerTool tools.RouteOptimizerTool
 	FlyAIHotelTool     tools.FlyAIHotelTool
+	FlyAITrainTool     tools.FlyAITrainTool
 }
 
 func NewTripAgent() TripAgent {
@@ -42,6 +43,7 @@ func NewTripAgent() TripAgent {
 		DistanceMatrixTool: tools.NewDistanceMatrixTool(),
 		RouteOptimizerTool: tools.NewRouteOptimizerTool(),
 		FlyAIHotelTool:     tools.NewFlyAIHotelTool(),
+		FlyAITrainTool:     tools.NewFlyAITrainTool(),
 	}
 }
 
@@ -162,10 +164,10 @@ if mapConfig.TencentMapKey != "" {
 	})
 }
 
-	transportPlans := a.TransportTool.Run(tripRequest)
+	transportPlans := []model.TransportPlan{}
 	agentSteps = append(agentSteps, model.AgentStep{
-		ToolName:    a.TransportTool.Name,
-		Description: "根据出发地、目的地、预算和偏好生成交通方案",
+		ToolName:    "transport_tool",
+		Description: "旧版模拟交通方案已停用，改用 FlyAI 真实火车票/机票数据",
 	})
 
 	attractions := make([]model.Attraction, 0)
@@ -203,10 +205,10 @@ if mapConfig.TencentMapKey != "" {
 	Description: "生成交通、酒店、地图和景点查询跳转链接",
 	})
 
-	bestBookingOption := a.PriceCompareTool.Run(tripRequest)
+	bestBookingOption := model.BestBookingOption{}
 	agentSteps = append(agentSteps, model.AgentStep{
-		ToolName:    a.PriceCompareTool.Name,
-		Description: "根据预算、偏好和候选报价选择综合最优链接",
+		ToolName:    "price_compare_tool",
+		Description: "旧版模拟比价已停用，等待真实票务结果参与推荐",
 	})
 
 	budgetBreakdown := a.BudgetTool.Run(tripRequest, bestBookingOption)
@@ -225,6 +227,12 @@ if mapConfig.TencentMapKey != "" {
 	agentSteps = append(agentSteps, model.AgentStep{
 		ToolName:    a.FlyAIHotelTool.Name,
 		Description: "使用 FlyAI / 飞猪真实酒店商品数据搜索酒店报价",
+	})
+
+	trainOffers := a.FlyAITrainTool.Run(tripRequest)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.FlyAITrainTool.Name,
+		Description: "使用 FlyAI / 飞猪真实火车票数据搜索车次和票价",
 	})
 
 	routeDistance := a.RouteDistanceTool.Run(
@@ -261,7 +269,7 @@ if mapConfig.TencentMapKey != "" {
 	})
 }
 
-	totalCost := calculateTotalCost(bestBookingOption, dailyRoutes, hotelOptions, hotelOffers)
+	totalCost := calculateTotalCost(hotelOffers, trainOffers)
 	summary := generateSummary(tripRequest, totalCost)
 
 	finalPlan := model.FinalTripPlan{
@@ -280,7 +288,7 @@ if mapConfig.TencentMapKey != "" {
 	TotalEstimatedCost:  totalCost,
 	Summary:             summary,
 	HotelOffers:         hotelOffers,
-	
+	TrainOffers:         trainOffers,
 }
 	if useLLMParser && llmClient != nil {
 		llmSummary, err := llm.GenerateTripSummaryWithLLM(ctx, finalPlan, llmClient)
@@ -307,24 +315,22 @@ if mapConfig.TencentMapKey != "" {
 	}
 }
 
-func calculateTotalCost(
-	bestBookingOption model.BestBookingOption,
-	dailyRoutes []model.DailyRoute,
-	hotelOptions []model.HotelOption,
-	hotelOffers []model.HotelOffer,
-) int {
+func calculateTotalCost(hotelOffers []model.HotelOffer, trainOffers []model.TrainOffer) int {
 	total := 0
 
-	if bestBookingOption.Best.Price > 0 {
-		total += bestBookingOption.Best.Price
+	for _, offer := range hotelOffers {
+		if offer.Status == "ok" && offer.TotalPrice > 0 {
+			total += offer.TotalPrice
+			break
+		}
 	}
 
-	for _, route := range dailyRoutes {
-		total += route.EstimatedCost
+	for _, offer := range trainOffers {
+		if offer.Status == "ok" && offer.Price > 0 {
+			total += offer.Price
+			break
+		}
 	}
-
-	hotelCost := getHotelCost(hotelOptions, hotelOffers)
-	total += hotelCost
 
 	return total
 }

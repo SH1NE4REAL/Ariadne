@@ -142,6 +142,162 @@ func (c Client) SearchHotels(
 	return offers, nil
 }
 
+type trainSearchResponse struct {
+	Status  int    `json:"status"`
+	Message string `json:"message"`
+	Data    struct {
+		ItemList []trainItem `json:"itemList"`
+	} `json:"data"`
+}
+
+type trainItem struct {
+	Journeys      []trainJourney `json:"journeys"`
+	JumpURL       string         `json:"jumpUrl"`
+	Price         string         `json:"price"`
+	TotalDuration string         `json:"totalDuration"`
+}
+
+type trainJourney struct {
+	JourneyType      string         `json:"journeyType"`
+	Segments         []trainSegment `json:"segments"`
+	TotalDuration    string         `json:"totalDuration"`
+	TransferDuration string         `json:"transferDuration"`
+}
+
+type trainSegment struct {
+	ArrCityName            string `json:"arrCityName"`
+	ArrDateTime            string `json:"arrDateTime"`
+	ArrStationName         string `json:"arrStationName"`
+	DepCityName            string `json:"depCityName"`
+	DepDateTime            string `json:"depDateTime"`
+	DepStationName         string `json:"depStationName"`
+	Duration               string `json:"duration"`
+	MarketingTransportName string `json:"marketingTransportName"`
+	MarketingTransportNo   string `json:"marketingTransportNo"`
+	SeatClassName          string `json:"seatClassName"`
+	TransportType          string `json:"transportType"`
+}
+
+func (c Client) SearchTrains(
+	ctx context.Context,
+	origin string,
+	destination string,
+	depDate string,
+	seatClassName string,
+	maxPrice int,
+) ([]model.TrainOffer, error) {
+	if origin == "" {
+		return nil, errors.New("origin is empty")
+	}
+
+	if destination == "" {
+		return nil, errors.New("destination is empty")
+	}
+
+	if depDate == "" {
+		return nil, errors.New("train departure date is empty")
+	}
+
+	args := []string{
+		"search-train",
+		"--origin", origin,
+		"--destination", destination,
+		"--dep-date", depDate,
+		"--sort-type", "3",
+	}
+
+	if seatClassName != "" {
+		args = append(args, "--seat-class-name", seatClassName)
+	}
+
+	if maxPrice > 0 {
+		args = append(args, "--max-price", strconv.Itoa(maxPrice))
+	}
+
+	cmdCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(cmdCtx, c.Command, args...)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+
+	rawOutput := strings.TrimSpace(stdout.String())
+	if rawOutput == "" {
+		if err != nil {
+			return nil, errors.New("flyai train command failed: " + err.Error() + "; stderr: " + stderr.String())
+		}
+		return nil, errors.New("flyai train returned empty output")
+	}
+
+	jsonText := extractFirstJSON(rawOutput)
+
+	var resp trainSearchResponse
+	if jsonErr := json.Unmarshal([]byte(jsonText), &resp); jsonErr != nil {
+		return nil, jsonErr
+	}
+
+	if resp.Status != 0 {
+		return nil, errors.New("flyai train search failed: " + resp.Message)
+	}
+
+	offers := make([]model.TrainOffer, 0)
+
+	for _, item := range resp.Data.ItemList {
+		offer := model.TrainOffer{
+			Provider:             "fliggy",
+			Price:                parseCNYPrice(item.Price),
+			TotalDurationMinutes: parseInt(item.TotalDuration),
+			BookingLink:          item.JumpURL,
+			DataSource:           "flyai_fliggy",
+			Status:               "ok",
+			Message:              "query ok",
+		}
+
+		if len(item.Journeys) > 0 {
+			journey := item.Journeys[0]
+			offer.JourneyType = journey.JourneyType
+
+			segments := make([]model.TrainSegment, 0)
+
+			for _, segment := range journey.Segments {
+				segments = append(segments, model.TrainSegment{
+					TrainNo:         segment.MarketingTransportNo,
+					TrainType:       segment.MarketingTransportName,
+					SeatClassName:   segment.SeatClassName,
+					DepCityName:     segment.DepCityName,
+					DepStationName:  segment.DepStationName,
+					DepDateTime:     segment.DepDateTime,
+					ArrCityName:     segment.ArrCityName,
+					ArrStationName:  segment.ArrStationName,
+					ArrDateTime:     segment.ArrDateTime,
+					DurationMinutes: parseInt(segment.Duration),
+				})
+			}
+
+			offer.Segments = segments
+		}
+
+		offers = append(offers, offer)
+	}
+
+	return offers, nil
+}
+
+func parseInt(text string) int {
+	value, err := strconv.Atoi(text)
+	if err != nil {
+		return 0
+	}
+
+	return value
+}
+
 func extractFirstJSON(text string) string {
 	text = strings.TrimSpace(text)
 
