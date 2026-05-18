@@ -28,6 +28,7 @@ type TripAgent struct {
 	FlyAITrainTool     tools.FlyAITrainTool
 	FlyAIPoiTool 		tools.FlyAIPoiTool
 	FlyAIFlightTool tools.FlyAIFlightTool
+	RouteFeasibilityTool tools.RouteFeasibilityTool
 }
 
 func NewTripAgent() TripAgent {
@@ -48,6 +49,7 @@ func NewTripAgent() TripAgent {
 		FlyAITrainTool:     tools.NewFlyAITrainTool(),
 		FlyAIPoiTool: 		tools.NewFlyAIPoiTool(),
 		FlyAIFlightTool: tools.NewFlyAIFlightTool(),
+		RouteFeasibilityTool: tools.NewRouteFeasibilityTool(),
 	}
 }
 
@@ -288,6 +290,12 @@ if mapConfig.TencentMapKey != "" {
 		ToolName:    a.RouteOptimizerTool.Name,
 		Description: "使用腾讯距离矩阵按最近邻策略优化每日景点顺序，并生成真实路段距离和时间",
 	})
+	
+	dailyRoutes = a.RouteFeasibilityTool.Run(tripRequest, dailyRoutes)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.RouteFeasibilityTool.Name,
+		Description: "根据真实路段距离、通勤时间和用户偏好过滤不可行路线",
+})
 } else {
 	agentSteps = append(agentSteps, model.AgentStep{
 		ToolName:    a.RouteOptimizerTool.Name,
