@@ -53,6 +53,15 @@ func (t POITool) Run(request model.TripRequest, mapConfig model.MapConfig) []mod
 	return attractions
 }
 
+func (t POITool) Search(destination string, keyword string, mapConfig model.MapConfig) []model.Attraction {
+	results, err := SearchPOIsWithTencent(destination, keyword, mapConfig)
+	if err != nil {
+		return nil
+	}
+
+	return results
+}
+
 type tencentPlaceSearchResponse struct {
 	Status  int    `json:"status"`
 	Message string `json:"message"`
@@ -69,7 +78,7 @@ type tencentPlaceSearchResponse struct {
 	} `json:"data"`
 }
 
-func SearchPOIsWithTencent(destination string, keyword string, mapConfig model.MapConfig) ([]model.Attraction, error){
+func SearchPOIsWithTencent(destination string, keyword string, mapConfig model.MapConfig) ([]model.Attraction, error) {
 	if mapConfig.TencentMapKey == "" {
 		return nil, errors.New("tencent map key is empty")
 	}
@@ -124,7 +133,7 @@ func SearchPOIsWithTencent(destination string, keyword string, mapConfig model.M
 			Name:          item.Title,
 			Category:      item.Category,
 			Address:       item.Address,
-			Description: buildPOIDescription(item.Title, item.Category, item.Address, keyword),
+			Description:   buildPOIDescription(item.Title, item.Category, item.Address, keyword),
 			EstimatedCost: 0,
 			VisitTime:     "建议根据现场情况安排",
 			Link:          buildTencentMapSearchLink(item.Title),

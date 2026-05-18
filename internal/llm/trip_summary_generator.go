@@ -54,6 +54,9 @@ func buildTripSummarySystemPrompt() string {
 21.住宿方案只使用 trip_recommendation.recommended_hotel，不要自行从 hotel_offers 第一个或其他元素中挑选。
 22.total_estimated_cost 应理解为 trip_recommendation.total_real_cost。
 23.如果 recommended_flight.price 来自往返机票组合，必须表述为“往返机票总价”，不要说成去程票价。
+24.如果存在 retrieved_memories 或长期用户记忆，且其中包含住宿偏好、交通偏好、景点偏好，总结时应说明推荐方案已参考用户长期偏好。例如用户不喜欢青年旅舍时，不要在总结中推荐青年旅舍。
+25.住宿总结必须严格使用 trip_recommendation.recommended_hotel，不要自行从 hotel_offers 中重新挑选其他酒店；如果长期记忆过滤掉了青年旅舍，也不要在总结中推荐任何青年旅舍、青年酒店、青旅、多人间或床位房。
+26.summary 必须基于 daily_routes 中真实存在的景点总结，不得忽略路线；如果 daily_routes 中出现与当前请求 hard avoid 冲突的景点，应提示路线质量异常，而不是正常推荐。
 输出要求：
 1. 只返回一段中文总结。
 2. 不要返回 markdown。

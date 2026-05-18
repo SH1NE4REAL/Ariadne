@@ -5,9 +5,13 @@ import (
 	"net/http"
 
 	"ariadne/internal/handler"
+
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	_ = godotenv.Load()
 	http.HandleFunc("/api/trip/plan", handler.PlanTripHandler)
 
 	fmt.Println("Ariadne HTTP 服务启动成功")
