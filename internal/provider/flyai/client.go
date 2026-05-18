@@ -351,3 +351,102 @@ func calculateNights(checkInDate string, checkOutDate string) int {
 
 	return nights
 }
+
+type poiSearchResponse struct {
+	Status  int    `json:"status"`
+	Message string `json:"message"`
+	Data    struct {
+		ItemList []poiItem `json:"itemList"`
+	} `json:"data"`
+}
+
+type poiItem struct {
+	Address       string `json:"address"`
+	Category      string `json:"category"`
+	Description   string `json:"description"`
+	FreePoiStatus string `json:"freePoiStatus"`
+	ID            string `json:"id"`
+	JumpURL       string `json:"jumpUrl"`
+	Latitude      string `json:"latitude"`
+	Longitude     string `json:"longitude"`
+	MainPic       string `json:"mainPic"`
+	Name          string `json:"name"`
+	PoiLevel      string `json:"poiLevel"`
+}
+
+func (c Client) SearchPOIs(
+	ctx context.Context,
+	cityName string,
+	keyword string,
+) ([]model.PoiOffer, error) {
+	if cityName == "" {
+		return nil, errors.New("city name is empty")
+	}
+
+	if keyword == "" {
+		return nil, errors.New("poi keyword is empty")
+	}
+
+	args := []string{
+		"search-poi",
+		"--city-name", cityName,
+		"--keyword", keyword,
+	}
+
+	cmdCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(cmdCtx, c.Command, args...)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+
+	rawOutput := strings.TrimSpace(stdout.String())
+	if rawOutput == "" {
+		if err != nil {
+			return nil, errors.New("flyai poi command failed: " + err.Error() + "; stderr: " + stderr.String())
+		}
+		return nil, errors.New("flyai poi returned empty output")
+	}
+
+	jsonText := extractFirstJSON(rawOutput)
+
+	var resp poiSearchResponse
+	if jsonErr := json.Unmarshal([]byte(jsonText), &resp); jsonErr != nil {
+		return nil, jsonErr
+	}
+
+	if resp.Status != 0 {
+		return nil, errors.New("flyai poi search failed: " + resp.Message)
+	}
+
+	offers := make([]model.PoiOffer, 0)
+
+	for _, item := range resp.Data.ItemList {
+		offers = append(offers, model.PoiOffer{
+			Provider:       "fliggy",
+			Name:           item.Name,
+			Address:        item.Address,
+			Category:       item.Category,
+			Description:    item.Description,
+			FreePoiStatus:  item.FreePoiStatus,
+			PoiLevel:       item.PoiLevel,
+			BookingLink:    item.JumpURL,
+			ImageURL:       item.MainPic,
+			Lat:            parseFloat(item.Latitude),
+			Lng:            parseFloat(item.Longitude),
+			HasTicketPrice: false,
+			TicketPrice:    0,
+			DataSource:     "flyai_fliggy",
+			Status:         "ok",
+			Message:        "query ok",
+		})
+	}
+
+	return offers, nil
+}

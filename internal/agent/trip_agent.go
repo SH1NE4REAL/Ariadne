@@ -26,6 +26,7 @@ type TripAgent struct {
 	RouteOptimizerTool tools.RouteOptimizerTool
 	FlyAIHotelTool     tools.FlyAIHotelTool
 	FlyAITrainTool     tools.FlyAITrainTool
+	FlyAIPoiTool 		tools.FlyAIPoiTool
 }
 
 func NewTripAgent() TripAgent {
@@ -44,6 +45,7 @@ func NewTripAgent() TripAgent {
 		RouteOptimizerTool: tools.NewRouteOptimizerTool(),
 		FlyAIHotelTool:     tools.NewFlyAIHotelTool(),
 		FlyAITrainTool:     tools.NewFlyAITrainTool(),
+		FlyAIPoiTool: 		tools.NewFlyAIPoiTool(),
 	}
 }
 
@@ -282,6 +284,12 @@ if mapConfig.TencentMapKey != "" {
 	})
 }
 
+	poiOffers := a.FlyAIPoiTool.Run(tripRequest, attractions)
+	agentSteps = append(agentSteps, model.AgentStep{
+		ToolName:    a.FlyAIPoiTool.Name,
+		Description: "使用 FlyAI / 飞猪补充景点详情、图片和跳转链接",
+	})
+
 	totalCost := calculateTotalCost(
 		hotelOffers,
 		recommendedOutboundTrainOffer,
@@ -311,6 +319,7 @@ if mapConfig.TencentMapKey != "" {
 	ReturnTrainOffers:             returnTrainOffers,
 	RecommendedOutboundTrainOffer: recommendedOutboundTrainOffer,
 	RecommendedReturnTrainOffer:   recommendedReturnTrainOffer,
+	PoiOffers: poiOffers,
 }
 	if useLLMParser && llmClient != nil {
 		llmSummary, err := llm.GenerateTripSummaryWithLLM(ctx, finalPlan, llmClient)

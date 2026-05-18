@@ -14,6 +14,7 @@ type FinalTripPlan struct {
 	HotelOptions        []HotelOption     `json:"hotel_options"`
 	HotelOffers 		[]HotelOffer 	  `json:"hotel_offers"`
 	TrainOffers 		[]TrainOffer 	  `json:"train_offers"`
+	PoiOffers 			[]PoiOffer 		  `json:"poi_offers"`
 	RecommendedTrainOffer TrainOffer `json:"recommended_train_offer"`
 	OutboundTrainOffers           []TrainOffer `json:"outbound_train_offers"`
 	ReturnTrainOffers             []TrainOffer `json:"return_train_offers"`
