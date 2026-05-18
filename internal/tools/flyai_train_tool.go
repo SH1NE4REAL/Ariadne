@@ -33,7 +33,7 @@ func (t FlyAITrainTool) Run(request model.TripRequest) []model.TrainOffer {
 		}
 	}
 
-	seatClassName := chooseTrainSeatClass(request)
+	seatClassName := ""
 
 	offers, err := t.Client.SearchTrains(
 		context.Background(),

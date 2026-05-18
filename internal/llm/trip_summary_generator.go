@@ -42,6 +42,8 @@ func buildTripSummarySystemPrompt() string {
 11.如果 hotel_offers 中存在 status 为 ok 的结果，表示住宿价格来自 FlyAI / 飞猪真实酒店商品；总结时应优先参考 hotel_offers，而不是 hotel_options。
 12.如果 train_offers 中存在 status 为 ok 的结果，表示火车票价格和车次来自 FlyAI / 飞猪真实票务数据；总结时可以引用 train_offers 的车次、价格、出发到达时间和 booking_link。
 13.不要引用 transport_plans 中的旧模拟价格；真实交通结果应优先参考 train_offers。
+14.如果 recommended_train_offer.status 为 ok，总结交通方案时必须优先使用 recommended_train_offer，而不是 train_offers 的第一个元素。
+15.如果用户 transport_preference 为“高铁”，不要推荐普快、硬座等不符合偏好的车次，除非没有可用高铁/动车结果，并且必须明确说明。
 
 输出要求：
 1. 只返回一段中文总结。

@@ -230,6 +230,7 @@ if mapConfig.TencentMapKey != "" {
 	})
 
 	trainOffers := a.FlyAITrainTool.Run(tripRequest)
+	recommendedTrainOffer := selectRecommendedTrainOffer(tripRequest, trainOffers)
 	agentSteps = append(agentSteps, model.AgentStep{
 		ToolName:    a.FlyAITrainTool.Name,
 		Description: "使用 FlyAI / 飞猪真实火车票数据搜索车次和票价",
@@ -269,7 +270,7 @@ if mapConfig.TencentMapKey != "" {
 	})
 }
 
-	totalCost := calculateTotalCost(hotelOffers, trainOffers)
+	totalCost := calculateTotalCost(hotelOffers, recommendedTrainOffer)
 	summary := generateSummary(tripRequest, totalCost)
 
 	finalPlan := model.FinalTripPlan{
@@ -289,6 +290,7 @@ if mapConfig.TencentMapKey != "" {
 	Summary:             summary,
 	HotelOffers:         hotelOffers,
 	TrainOffers:         trainOffers,
+	RecommendedTrainOffer: recommendedTrainOffer,
 }
 	if useLLMParser && llmClient != nil {
 		llmSummary, err := llm.GenerateTripSummaryWithLLM(ctx, finalPlan, llmClient)
@@ -315,7 +317,7 @@ if mapConfig.TencentMapKey != "" {
 	}
 }
 
-func calculateTotalCost(hotelOffers []model.HotelOffer, trainOffers []model.TrainOffer) int {
+func calculateTotalCost(hotelOffers []model.HotelOffer, recommendedTrainOffer model.TrainOffer) int {
 	total := 0
 
 	for _, offer := range hotelOffers {
@@ -325,11 +327,8 @@ func calculateTotalCost(hotelOffers []model.HotelOffer, trainOffers []model.Trai
 		}
 	}
 
-	for _, offer := range trainOffers {
-		if offer.Status == "ok" && offer.Price > 0 {
-			total += offer.Price
-			break
-		}
+	if recommendedTrainOffer.Status == "ok" && recommendedTrainOffer.Price > 0 {
+		total += recommendedTrainOffer.Price
 	}
 
 	return total
@@ -363,4 +362,86 @@ func generateSummary(request model.TripRequest, totalCost int) string {
 	}
 
 	return fmt.Sprintf("当前方案预估总花费约 %d 元，可作为初版旅行计划参考。", totalCost)
+}
+func selectRecommendedTrainOffer(request model.TripRequest, trainOffers []model.TrainOffer) model.TrainOffer {
+	candidates := make([]model.TrainOffer, 0)
+
+	for _, offer := range trainOffers {
+		if offer.Status != "ok" || offer.Price <= 0 {
+			continue
+		}
+
+		if request.TransportPreference == "高铁" {
+			if !isHighSpeedTrainOffer(offer) {
+				continue
+			}
+		}
+
+		candidates = append(candidates, offer)
+	}
+
+	if len(candidates) == 0 {
+		return model.TrainOffer{
+			Provider:   "fliggy",
+			DataSource: "flyai_fliggy",
+			Status:     "unavailable",
+			Message:    "没有找到符合用户交通偏好的真实火车票结果。",
+		}
+	}
+
+	best := candidates[0]
+
+	for _, offer := range candidates[1:] {
+		if isBetterTrainOffer(request, offer, best) {
+			best = offer
+		}
+	}
+
+	return best
+}
+
+func isHighSpeedTrainOffer(offer model.TrainOffer) bool {
+	for _, segment := range offer.Segments {
+		if segment.TrainType == "高铁" || segment.TrainType == "动车" || segment.TrainType == "城际" {
+			return true
+		}
+
+		if len(segment.TrainNo) > 0 {
+			first := segment.TrainNo[0]
+			if first == 'G' || first == 'D' || first == 'C' {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func isBetterTrainOffer(request model.TripRequest, current model.TrainOffer, best model.TrainOffer) bool {
+	// 轻松偏好：优先直达，再看耗时，再看价格
+	if request.Preference == "轻松" {
+		if current.JourneyType == "直达" && best.JourneyType != "直达" {
+			return true
+		}
+
+		if current.JourneyType != "直达" && best.JourneyType == "直达" {
+			return false
+		}
+
+		if current.TotalDurationMinutes > 0 && best.TotalDurationMinutes > 0 {
+			if current.TotalDurationMinutes < best.TotalDurationMinutes {
+				return true
+			}
+		}
+
+		return current.Price < best.Price
+	}
+
+	// 省钱偏好：优先低价
+	if request.Preference == "省钱" {
+		return current.Price < best.Price
+	}
+
+	// 默认：价格更低优先
+	return current.Price < best.Price
 }
