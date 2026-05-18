@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
-
+	"strings"
 	"ariadne/internal/llm"
 	"ariadne/internal/model"
 	"ariadne/internal/parser"
@@ -247,19 +247,19 @@ if mapConfig.TencentMapKey != "" {
 		ToolName:    a.FlyAITrainTool.Name,
 		Description: "使用 FlyAI / 飞猪真实火车票数据搜索去程和返程车次与票价",
 	})
-	agentSteps = append(agentSteps, model.AgentStep{
-		ToolName:    a.FlyAITrainTool.Name,
-		Description: "使用 FlyAI / 飞猪真实火车票数据搜索车次和票价",
-	})
+	
 
 	flightOffers := a.FlyAIFlightTool.Run(tripRequest)
 
 	recommendedFlightOffer := selectRecommendedFlightOffer(tripRequest, flightOffers)
 
+
 	agentSteps = append(agentSteps, model.AgentStep{
 		ToolName:    a.FlyAIFlightTool.Name,
 		Description: "使用 FlyAI / 飞猪真实机票数据搜索航班和票价",
 	})
+
+
 
 	routeDistance := a.RouteDistanceTool.Run(
 	tripRequest.Origin,
@@ -301,14 +301,19 @@ if mapConfig.TencentMapKey != "" {
 		Description: "使用 FlyAI / 飞猪补充景点详情、图片和跳转链接",
 	})
 
-	totalCost := calculateTotalCost(
-	tripRequest,
-	hotelOffers,
-	recommendedOutboundTrainOffer,
-	recommendedReturnTrainOffer,
-	recommendedFlightOffer,
+	tripRecommendation := buildTripRecommendation(
+		tripRequest,
+		budgetBreakdown,
+		hotelOffers,
+		recommendedOutboundTrainOffer,
+		recommendedReturnTrainOffer,
+		recommendedFlightOffer,
 	)
+
+	totalCost := tripRecommendation.TotalRealCost
 	summary := generateSummary(tripRequest, totalCost)
+
+	
 
 	finalPlan := model.FinalTripPlan{
 	Request:             tripRequest,
@@ -335,6 +340,7 @@ if mapConfig.TencentMapKey != "" {
 	PoiOffers: poiOffers,
 	FlightOffers:           flightOffers,
 	RecommendedFlightOffer: recommendedFlightOffer,
+	TripRecommendation: tripRecommendation,
 }
 	if useLLMParser && llmClient != nil {
 		llmSummary, err := llm.GenerateTripSummaryWithLLM(ctx, finalPlan, llmClient)
@@ -558,4 +564,248 @@ func isBetterFlightOffer(request model.TripRequest, current model.FlightOffer, b
 
 	// 默认：优先低价
 	return current.Price < best.Price
+}
+
+func buildTripRecommendation(
+	request model.TripRequest,
+	budgetBreakdown model.BudgetBreakdown,
+	hotelOffers []model.HotelOffer,
+	recommendedOutboundTrain model.TrainOffer,
+	recommendedReturnTrain model.TrainOffer,
+	recommendedFlight model.FlightOffer,
+) model.TripRecommendation {
+	recommendedHotel := selectRecommendedHotel(request, budgetBreakdown, hotelOffers)
+	transportType := selectRecommendedTransportType(request, recommendedOutboundTrain, recommendedReturnTrain, recommendedFlight)
+
+	costItems := make([]model.RecommendationCostItem, 0)
+	totalRealCost := 0
+
+	if recommendedHotel.Status == "ok" && recommendedHotel.TotalPrice > 0 {
+		costItems = append(costItems, model.RecommendationCostItem{
+			Type:       "hotel",
+			Name:       recommendedHotel.Name,
+			Amount:     recommendedHotel.TotalPrice,
+			Currency:   "CNY",
+			DataSource: recommendedHotel.DataSource,
+		})
+		totalRealCost += recommendedHotel.TotalPrice
+	}
+
+	if transportType == "flight" {
+		if recommendedFlight.Status == "ok" && recommendedFlight.Price > 0 {
+			costItems = append(costItems, model.RecommendationCostItem{
+				Type:       "flight_round_trip",
+				Name:       "往返机票",
+				Amount:     recommendedFlight.Price,
+				Currency:   "CNY",
+				DataSource: recommendedFlight.DataSource,
+			})
+			totalRealCost += recommendedFlight.Price
+		}
+	}
+
+	if transportType == "train" {
+		if recommendedOutboundTrain.Status == "ok" && recommendedOutboundTrain.Price > 0 {
+			costItems = append(costItems, model.RecommendationCostItem{
+				Type:       "train_outbound",
+				Name:       "去程火车票",
+				Amount:     recommendedOutboundTrain.Price,
+				Currency:   "CNY",
+				DataSource: recommendedOutboundTrain.DataSource,
+			})
+			totalRealCost += recommendedOutboundTrain.Price
+		}
+
+		if recommendedReturnTrain.Status == "ok" && recommendedReturnTrain.Price > 0 {
+			costItems = append(costItems, model.RecommendationCostItem{
+				Type:       "train_return",
+				Name:       "返程火车票",
+				Amount:     recommendedReturnTrain.Price,
+				Currency:   "CNY",
+				DataSource: recommendedReturnTrain.DataSource,
+			})
+			totalRealCost += recommendedReturnTrain.Price
+		}
+	}
+
+	budgetStatus := "unknown"
+	overBudget := 0
+
+	if request.Budget > 0 {
+		if totalRealCost <= request.Budget {
+			budgetStatus = "ok"
+		} else {
+			budgetStatus = "over_budget"
+			overBudget = totalRealCost - request.Budget
+		}
+	}
+
+	return model.TripRecommendation{
+		RecommendedTransportType: transportType,
+		RecommendedHotel:         recommendedHotel,
+		RecommendedOutboundTrain: recommendedOutboundTrain,
+		RecommendedReturnTrain:   recommendedReturnTrain,
+		RecommendedFlight:        recommendedFlight,
+		TotalRealCost:            totalRealCost,
+		Budget:                   request.Budget,
+		BudgetStatus:             budgetStatus,
+		OverBudget:               overBudget,
+		CostItems:                costItems,
+		Reason:                   buildTripRecommendationReason(request, transportType, totalRealCost, budgetStatus, overBudget),
+	}
+}
+
+func selectRecommendedTransportType(
+	request model.TripRequest,
+	recommendedOutboundTrain model.TrainOffer,
+	recommendedReturnTrain model.TrainOffer,
+	recommendedFlight model.FlightOffer,
+) string {
+	if request.TransportPreference == "飞机" || strings.Contains(request.RawInput, "飞机") {
+		if recommendedFlight.Status == "ok" {
+			return "flight"
+		}
+	}
+
+	if request.TransportPreference == "高铁" ||
+		request.TransportPreference == "动车" ||
+		request.TransportPreference == "火车" ||
+		strings.Contains(request.RawInput, "高铁") ||
+		strings.Contains(request.RawInput, "火车") {
+		if recommendedOutboundTrain.Status == "ok" || recommendedReturnTrain.Status == "ok" {
+			return "train"
+		}
+	}
+
+	if strings.Contains(request.RawInput, "快") && recommendedFlight.Status == "ok" {
+		return "flight"
+	}
+
+	trainCost := 0
+	if recommendedOutboundTrain.Status == "ok" {
+		trainCost += recommendedOutboundTrain.Price
+	}
+	if recommendedReturnTrain.Status == "ok" {
+		trainCost += recommendedReturnTrain.Price
+	}
+
+	if recommendedFlight.Status == "ok" && trainCost > 0 {
+		if recommendedFlight.Price <= trainCost {
+			return "flight"
+		}
+		return "train"
+	}
+
+	if recommendedFlight.Status == "ok" {
+		return "flight"
+	}
+
+	if recommendedOutboundTrain.Status == "ok" || recommendedReturnTrain.Status == "ok" {
+		return "train"
+	}
+
+	return "unknown"
+}
+
+func selectRecommendedHotel(
+	request model.TripRequest,
+	budgetBreakdown model.BudgetBreakdown,
+	hotelOffers []model.HotelOffer,
+) model.HotelOffer {
+	candidates := make([]model.HotelOffer, 0)
+
+	for _, offer := range hotelOffers {
+		if offer.Status == "ok" && offer.TotalPrice > 0 {
+			candidates = append(candidates, offer)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return model.HotelOffer{
+			Provider:   "fliggy",
+			DataSource: "flyai_fliggy",
+			Status:     "unavailable",
+			Message:    "没有找到可用的真实酒店报价。",
+		}
+	}
+
+	best := candidates[0]
+
+	for _, offer := range candidates[1:] {
+		if isBetterHotelOffer(request, budgetBreakdown, offer, best) {
+			best = offer
+		}
+	}
+
+	return best
+}
+
+func isBetterHotelOffer(
+	request model.TripRequest,
+	budgetBreakdown model.BudgetBreakdown,
+	current model.HotelOffer,
+	best model.HotelOffer,
+) bool {
+	currentWithinBudget := budgetBreakdown.HotelBudget <= 0 || current.TotalPrice <= budgetBreakdown.HotelBudget
+	bestWithinBudget := budgetBreakdown.HotelBudget <= 0 || best.TotalPrice <= budgetBreakdown.HotelBudget
+
+	if currentWithinBudget && !bestWithinBudget {
+		return true
+	}
+
+	if !currentWithinBudget && bestWithinBudget {
+		return false
+	}
+
+	currentNearTransit := isNearTransit(current.NearbyPOI)
+	bestNearTransit := isNearTransit(best.NearbyPOI)
+
+	if request.Preference == "轻松" || strings.Contains(request.RawInput, "方便") || strings.Contains(request.RawInput, "地铁") {
+		if currentNearTransit && !bestNearTransit {
+			return true
+		}
+
+		if !currentNearTransit && bestNearTransit {
+			return false
+		}
+	}
+
+	return current.TotalPrice < best.TotalPrice
+}
+
+func isNearTransit(nearbyPOI string) bool {
+	return strings.Contains(nearbyPOI, "地铁") ||
+		strings.Contains(nearbyPOI, "站") ||
+		strings.Contains(nearbyPOI, "机场") ||
+		strings.Contains(nearbyPOI, "火车站")
+}
+
+func buildTripRecommendationReason(
+	request model.TripRequest,
+	transportType string,
+	totalRealCost int,
+	budgetStatus string,
+	overBudget int,
+) string {
+	transportText := "真实交通方案"
+	if transportType == "flight" {
+		transportText = "真实往返机票方案"
+	}
+	if transportType == "train" {
+		transportText = "真实往返火车票方案"
+	}
+
+	if request.Budget <= 0 {
+		return fmt.Sprintf("已基于 FlyAI / 飞猪真实酒店报价和%s生成推荐方案，但用户没有提供明确预算。", transportText)
+	}
+
+	if budgetStatus == "ok" {
+		return fmt.Sprintf("已基于 FlyAI / 飞猪真实酒店报价和%s生成推荐方案，当前已知真实费用约 %d 元，在预算范围内。", transportText, totalRealCost)
+	}
+
+	if budgetStatus == "over_budget" {
+		return fmt.Sprintf("已基于 FlyAI / 飞猪真实酒店报价和%s生成推荐方案，当前已知真实费用约 %d 元，超出预算 %d 元。", transportText, totalRealCost, overBudget)
+	}
+
+	return "推荐方案已生成，但部分真实费用数据不可用。"
 }

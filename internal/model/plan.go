@@ -24,5 +24,6 @@ type FinalTripPlan struct {
 	RecommendedFlightOffer  FlightOffer   `json:"recommended_flight_offer"`
 	AgentSteps          []AgentStep       `json:"agent_steps"`
 	TotalEstimatedCost  int               `json:"total_estimated_cost"`
+	TripRecommendation TripRecommendation `json:"trip_recommendation"`
 	Summary             string            `json:"summary"`
 }

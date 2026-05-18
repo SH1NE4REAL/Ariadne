@@ -47,7 +47,13 @@ func buildTripSummarySystemPrompt() string {
 16.如果 recommended_outbound_train_offer.status 为 ok，总结去程交通时优先使用它。
 17.如果 recommended_return_train_offer.status 为 ok，总结返程交通时优先使用它。
 18.total_estimated_cost 当前应理解为：真实酒店报价 + 推荐去程火车票 + 推荐返程火车票；不应使用 transport_plans 的旧模拟数据。
-
+19.如果 trip_recommendation 存在，必须优先根据 trip_recommendation 总结最终推荐方案。
+20.交通方案只使用 trip_recommendation.recommended_transport_type 对应的推荐结果：
+- recommended_transport_type = flight 时，只总结 recommended_flight，不要再总结推荐火车。
+- recommended_transport_type = train 时，只总结 recommended_outbound_train 和 recommended_return_train，不要再总结推荐机票。
+21.住宿方案只使用 trip_recommendation.recommended_hotel，不要自行从 hotel_offers 第一个或其他元素中挑选。
+22.total_estimated_cost 应理解为 trip_recommendation.total_real_cost。
+23.如果 recommended_flight.price 来自往返机票组合，必须表述为“往返机票总价”，不要说成去程票价。
 输出要求：
 1. 只返回一段中文总结。
 2. 不要返回 markdown。
