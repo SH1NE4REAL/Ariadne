@@ -8,6 +8,11 @@ type RecommendationCostItem struct {
 	DataSource string `json:"data_source"`
 }
 
+type RecommendationViolation struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
 type TripRecommendation struct {
 	RecommendedTransportType string      `json:"recommended_transport_type"` // flight / train / unknown
 	RecommendedHotel         HotelOffer  `json:"recommended_hotel"`

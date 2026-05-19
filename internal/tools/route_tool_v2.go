@@ -17,3 +17,11 @@ func NewRouteTool() RouteTool {
 func (t RouteTool) Run(request model.TripRequest, attractions []model.Attraction) []model.DailyRoute {
 	return GenerateDailyRoutes(request, attractions)
 }
+
+func (t RouteTool) RunWithPreferences(
+	request model.TripRequest,
+	attractions []model.Attraction,
+	preferenceProfile model.EffectivePreferenceProfile,
+) []model.DailyRoute {
+	return ComposeDailyRoutes(request, attractions, preferenceProfile)
+}

@@ -67,6 +67,8 @@ func (t PreferenceConstraintTool) BuildConstraintsFromRequest(request model.Trip
 	avoidNightlife := containsAnyConstraintText(text, []string{"不要酒吧", "不要夜生活", "不去酒吧", "不去夜店", "不要夜店", "不想夜生活"})
 	avoidInfluencerStreet := containsAnyConstraintText(text, []string{"不要网红街区", "不去网红街区", "不要网红店", "不要网红"})
 	avoidShopping := containsAnyConstraintText(text, []string{"不要普通商场", "不去普通商场", "不要商场", "不逛商场"})
+	avoidHomestay := hasNegativeAccommodationIntent(text, []string{"民宿", "客栈", "公寓", "青旅", "旅社"})
+	preferHomestay := !avoidHomestay && hasPositiveAccommodationIntent(text, []string{"民宿", "客栈"})
 
 	if avoidFlight || preferHighSpeedTrain {
 		strength := "soft"
@@ -87,6 +89,34 @@ func (t PreferenceConstraintTool) BuildConstraintsFromRequest(request model.Trip
 			Source:          "current_request",
 			Reason:          "当前请求偏好高铁或动车，并排除飞机",
 			SourceMemoryID:  "current_request",
+		})
+	}
+
+	if avoidHomestay {
+		constraints = append(constraints, model.PreferenceConstraint{
+			Domain:          "hotel",
+			PreferTags:      []string{"hotel", "chain_hotel", "metro_nearby", "clean"},
+			AvoidTags:       []string{"hostel", "homestay", "apartment", "family_inn", "guesthouse"},
+			PreferKeywords:  []string{"酒店", "连锁", "地铁", "如家", "汉庭", "全季", "速8"},
+			ExcludeKeywords: []string{"青旅", "青年旅舍", "民宿", "公寓", "家庭旅社", "客栈", "旅社"},
+			Strength:        "hard",
+			Priority:        100,
+			Source:          "current_request",
+			Reason:          "当前请求明确排除非标准住宿形态",
+			SourceMemoryID:  "current_request",
+		})
+	}
+
+	if preferHomestay {
+		constraints = append(constraints, model.PreferenceConstraint{
+			Domain:         "hotel",
+			PreferTags:     []string{"homestay", "guesthouse", "local_stay"},
+			PreferKeywords: []string{"民宿", "客栈", "特色住宿", "海边民宿"},
+			Strength:       "soft",
+			Priority:       90,
+			Source:         "current_request",
+			Reason:         "当前请求表达了想体验民宿或客栈类特色住宿",
+			SourceMemoryID: "current_request",
 		})
 	}
 
@@ -228,11 +258,16 @@ func (t PreferenceConstraintTool) BuildConstraintsFromRequest(request model.Trip
 	}
 
 	if containsAnyConstraintText(text, []string{"不想晒太阳", "不要晒太阳", "怕晒", "少晒", "室内"}) {
+		indoorKeywords := []string{"室内景点", "科技馆", "海洋馆", "展览馆"}
+		if childFriendly {
+			indoorKeywords = []string{"科技馆", "海洋馆", "水族馆", "儿童展览", "科普"}
+		}
+
 		constraints = append(constraints, model.PreferenceConstraint{
 			Domain:         "attraction",
 			PreferTags:     []string{"indoor", "low_exertion"},
 			AvoidTags:      []string{"outdoor", "high_exertion"},
-			PreferKeywords: []string{"博物馆", "展览馆", "美术馆", "商场"},
+			PreferKeywords: indoorKeywords,
 			Strength:       "soft",
 			Priority:       90,
 			Source:         "current_request",
@@ -267,11 +302,24 @@ func (t PreferenceConstraintTool) BuildConstraintsFromRequest(request model.Trip
 		})
 	}
 
+	if containsAnyConstraintText(text, []string{"看海", "海边", "海滩", "沙滩", "海滨", "海岸", "滨海", "观海"}) {
+		constraints = append(constraints, model.PreferenceConstraint{
+			Domain:         "attraction",
+			PreferTags:     []string{"sea", "beach", "waterfront", "coast", "low_exertion"},
+			PreferKeywords: []string{"海边", "海滩", "沙滩", "海滨", "海岸", "滨海步道", "观海"},
+			Strength:       "soft",
+			Priority:       95,
+			Source:         "current_request",
+			Reason:         "当前请求偏好看海或海滨活动",
+			SourceMemoryID: "current_request",
+		})
+	}
+
 	if containsAnyConstraintText(text, []string{"老街", "市区老街", "历史街区", "步行街"}) {
 		constraints = append(constraints, model.PreferenceConstraint{
 			Domain:         "attraction",
 			PreferTags:     []string{"historic_site", "city_walk", "commercial_area", "low_exertion"},
-			PreferKeywords: []string{"历史街区", "步行街", "宽窄巷子", "锦里", "春熙路"},
+			PreferKeywords: []string{"老街", "历史街区", "步行街", "古街"},
 			Strength:       "soft",
 			Priority:       90,
 			Source:         "current_request",
@@ -631,6 +679,10 @@ func enrichConstraintTagsFromKeywords(c model.PreferenceConstraint) model.Prefer
 			if containsAnyConstraintText(text, []string{"地标", "夜景", "观景"}) {
 				c.PreferTags = append(c.PreferTags, "landmark", "night_view", "city_walk")
 			}
+
+			if containsAnyConstraintText(text, []string{"看海", "海边", "海滩", "沙滩", "海滨", "海岸", "滨海", "观海"}) {
+				c.PreferTags = append(c.PreferTags, "sea", "beach", "waterfront", "coast", "low_exertion")
+			}
 		}
 
 		if len(c.AvoidTags) == 0 {
@@ -720,6 +772,34 @@ func containsAnyConstraintText(text string, keywords []string) bool {
 
 		if strings.Contains(text, strings.ToLower(keyword)) {
 			return true
+		}
+	}
+
+	return false
+}
+
+func hasNegativeAccommodationIntent(text string, accommodationTerms []string) bool {
+	negativePrefixes := []string{"不要", "不住", "不想住", "避开", "别推荐", "不推荐", "不考虑", "不喜欢"}
+
+	for _, term := range accommodationTerms {
+		for _, prefix := range negativePrefixes {
+			if strings.Contains(text, prefix+term) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func hasPositiveAccommodationIntent(text string, accommodationTerms []string) bool {
+	positivePrefixes := []string{"想体验", "想住", "希望", "特色", "海边", "住", "体验"}
+
+	for _, term := range accommodationTerms {
+		for _, prefix := range positivePrefixes {
+			if strings.Contains(text, prefix+term) || strings.Contains(text, prefix+"的"+term) {
+				return true
+			}
 		}
 	}
 

@@ -50,7 +50,13 @@ func isInvalidPOI(text string, name string, category string) bool {
 		"教育学校:教育学校附属",
 		"历史学系", "人文楼", "人文学院", "办公楼",
 		"民宿", "酒店", "宾馆", "公寓",
-		"彩票", "咖啡", "茶馆", "饭店",
+		"彩票",
+		"住宅区", "小区", "社区", "居民楼",
+		"公交站", "公交车站", "地铁站出入口",
+		"口腔", "医院", "诊所", "药房",
+		"村委会", "居委会", "政府机关", "派出所", "办事处",
+		"照明工程", "灯具用品", "灯饰",
+		"安置房", "农贸市场",
 		"学院", "管理咨询中心",
 		"武术俱乐部", "俱乐部", "烟酒",
 	}
@@ -61,6 +67,11 @@ func isInvalidPOI(text string, name string, category string) bool {
 		"汽车:停车场",
 		"教育学校",
 		"室内及附属设施",
+		"房地产",
+		"住宅区",
+		"医疗保健",
+		"政府机构",
+		"交通设施",
 	}
 
 	if containsAnyText(text, invalidKeywords) {
@@ -144,6 +155,10 @@ func inferPOITags(text string) []string {
 
 	if containsAnyText(text, []string{"美食", "餐厅", "饭店", "茶馆", "茶社", "咖啡"}) {
 		tags = append(tags, "food", "local_food")
+	}
+
+	if containsAnyText(text, []string{"海边", "海滩", "沙滩", "海滨", "海岸", "滨海", "观海", "码头", "海湾", "海堤", "栈道"}) {
+		tags = append(tags, "sea", "beach", "waterfront", "coast", "low_exertion")
 	}
 
 	if containsAnyText(text, []string{"夜景", "观景", "电视塔", "高楼", "天台"}) {

@@ -212,15 +212,23 @@ func (t PreferenceAdapterTool) BuildAttractionSearchKeywords(
 	}
 
 	if containsAnyText(text, []string{"小吃", "美食", "地道吃的", "本地吃的"}) {
-		keywords = append(keywords, "小吃街", "美食街", "本地小吃", "锦里")
+		keywords = append(keywords, "小吃街", "美食街")
 	}
 
 	if containsAnyText(text, []string{"夜景", "晚上逛", "夜游"}) {
-		keywords = append(keywords, "夜景", "九眼桥", "太古里")
+		keywords = append(keywords, "夜景", "观景")
 	}
 
 	if containsAnyText(text, []string{"老街", "市区老街", "历史街区", "逛街"}) {
-		keywords = append(keywords, "历史街区", "步行街", "宽窄巷子", "锦里", "春熙路")
+		keywords = append(keywords, "老街", "历史街区")
+	}
+
+	if containsAnyText(text, []string{"看海", "海边", "海滩", "沙滩", "海滨", "海岸", "滨海", "观海"}) {
+		keywords = append([]string{"海边", "海滩"}, keywords...)
+	}
+
+	if containsAnyText(text, []string{"科技馆", "科学中心", "海洋馆", "水族馆", "科普"}) {
+		keywords = append(keywords, "科技馆", "海洋馆", "水族馆", "儿童展览", "科普", "科学中心", "自然博物馆")
 	}
 
 	if containsAnyText(text, []string{"亲子", "带孩子", "带小孩"}) {
@@ -238,6 +246,10 @@ func (t PreferenceAdapterTool) BuildAttractionSearchKeywords(
 	keywords = append(keywords, effectiveSearchKeywords(attractionPreference, avoidMuseum)...)
 	keywords = append(keywords, effectiveSearchKeywords(foodPreference, avoidMuseum)...)
 
+	if needsGenericMainAttractionSearch(attractionPreference, foodPreference) {
+		keywords = append([]string{"景点", "城市地标"}, keywords...)
+	}
+
 	if len(keywords) == 0 {
 		keywords = append(keywords, "景点")
 	}
@@ -250,6 +262,23 @@ func (t PreferenceAdapterTool) BuildAttractionSearchKeywords(
 	}
 
 	return limitStrings(uniqueStrings(keywords), 8)
+}
+
+func (t PreferenceAdapterTool) BuildFallbackAttractionSearchKeywords(
+	request model.TripRequest,
+	attractions []model.Attraction,
+	constraints []model.PreferenceConstraint,
+) []string {
+	_ = t
+
+	profile := ResolvePreferenceConstraints(constraints)
+	keywords := make([]string, 0)
+
+	if requiresSeaIntent(request, profile) && !attractionsContainAnyTag(attractions, []string{"sea", "beach", "waterfront", "coast"}) {
+		keywords = append(keywords, "海边", "海滩", "沙滩", "滨海步道", "海岸", "观海")
+	}
+
+	return limitStrings(uniqueStrings(keywords), 6)
 }
 
 func (t PreferenceAdapterTool) FilterAttractions(
@@ -484,8 +513,76 @@ func effectiveSearchKeywords(preference model.EffectiveDomainPreference, avoidMu
 	return keywords
 }
 
+func needsGenericMainAttractionSearch(
+	attractionPreference model.EffectiveDomainPreference,
+	foodPreference model.EffectiveDomainPreference,
+) bool {
+	hasFoodIntent := hasString(foodPreference.HardPreferTags, "food") ||
+		hasString(foodPreference.SoftPreferTags, "food") ||
+		hasString(foodPreference.HardPreferTags, "local_food") ||
+		hasString(foodPreference.SoftPreferTags, "local_food") ||
+		hasString(foodPreference.HardPreferTags, "snack_street") ||
+		hasString(foodPreference.SoftPreferTags, "snack_street")
+
+	if !hasFoodIntent {
+		return false
+	}
+
+	mainTags := []string{
+		"museum",
+		"exhibition",
+		"art_gallery",
+		"memorial",
+		"science_museum",
+		"aquarium",
+		"zoo",
+		"historic_site",
+		"old_street",
+		"city_walk",
+		"park",
+		"nature",
+		"landmark",
+		"night_view",
+	}
+
+	for _, tag := range mainTags {
+		if hasString(attractionPreference.HardPreferTags, tag) || hasString(attractionPreference.SoftPreferTags, tag) {
+			return false
+		}
+	}
+
+	return true
+}
+
 func hasEffectiveHardAvoidTag(preference model.EffectiveDomainPreference, target string) bool {
 	return hasString(preference.HardAvoidTags, target)
+}
+
+func requiresSeaIntent(request model.TripRequest, profile model.EffectivePreferenceProfile) bool {
+	text := strings.ToLower(request.RawInput + " " + request.Preference)
+
+	if containsAnyText(text, []string{"看海", "海边", "海滩", "沙滩", "海滨", "海岸", "滨海", "观海"}) {
+		return true
+	}
+
+	for _, tag := range []string{"sea", "beach", "waterfront", "coast"} {
+		if hasString(profile.Attraction.HardPreferTags, tag) || hasString(profile.Attraction.SoftPreferTags, tag) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func attractionsContainAnyTag(attractions []model.Attraction, tags []string) bool {
+	for _, attraction := range attractions {
+		profile := BuildPOIProfile(attraction)
+		if hasAnyTag(profile.Tags, tags) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func hasCurrentHardAvoidTag(constraints []model.PreferenceConstraint, domain string, target string) bool {
@@ -537,7 +634,7 @@ func removeShoppingSearchKeywords(keywords []string) []string {
 	result := make([]string, 0, len(keywords))
 
 	for _, keyword := range keywords {
-		if containsAnyText(keyword, []string{"商场", "购物中心", "商业街", "太古里"}) {
+		if containsAnyText(keyword, []string{"商场", "购物中心", "商业街"}) {
 			continue
 		}
 
@@ -577,11 +674,11 @@ func keywordsForPOITag(tag string) []string {
 	case "culture":
 		return []string{"历史", "人文"}
 	case "indoor":
-		return []string{"博物馆", "展览馆", "商场"}
+		return []string{"室内景点", "科技馆", "海洋馆"}
 	case "low_exertion":
-		return []string{"博物馆", "展览馆", "城市地标"}
+		return []string{"室内景点", "城市地标"}
 	case "city_walk":
-		return []string{"商业街", "历史街区", "地标"}
+		return []string{"老街", "历史街区", "步行街", "古街"}
 	case "science_museum":
 		return []string{"科技馆", "科学中心"}
 	case "family":
@@ -593,11 +690,13 @@ func keywordsForPOITag(tag string) []string {
 	case "shopping", "commercial_area":
 		return []string{"商场", "购物中心", "商业街"}
 	case "food", "local_food", "snack_street":
-		return []string{"小吃", "美食", "本地美食"}
+		return []string{"小吃街", "美食街", "本地小吃", "夜市"}
 	case "night_view":
-		return []string{"夜景", "观景"}
+		return []string{"夜景", "观景", "海滨夜景", "城市夜景"}
 	case "landmark":
 		return []string{"地标"}
+	case "sea", "beach", "waterfront", "coast":
+		return []string{"海边", "海滩", "沙滩", "海滨", "海岸", "滨海步道", "观海"}
 	case "nature", "park":
 		return []string{"公园", "自然风景"}
 	case "lake":
