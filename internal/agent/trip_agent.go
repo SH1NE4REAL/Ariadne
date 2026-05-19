@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 )
 
 type TripAgent struct {
@@ -63,7 +64,6 @@ func NewTripAgent() TripAgent {
 }
 
 func (a TripAgent) Run(message string, llmConfig model.LLMConfig, mapConfig model.MapConfig) model.TripAgentResult {
-	_ = mapConfig
 	ctx := context.Background()
 	agentSteps := make([]model.AgentStep, 0)
 
@@ -221,23 +221,35 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig, mapConfig mode
 	})
 
 	attractions := make([]model.Attraction, 0)
+	rawAttractions := make([]model.Attraction, 0)
+	fallbackKeywords := make([]string, 0)
+	rawPOICountByKeyword := map[string]int{}
+	searchStatusByKeyword := map[string]string{}
+	searchErrorByKeyword := map[string]string{}
 
 	if mapConfig.TencentMapKey != "" {
 		attractionKeywords := a.PreferenceAdapterTool.BuildAttractionSearchKeywords(tripRequest, preferenceConstraints)
 
 		for _, keyword := range attractionKeywords {
-			partial := a.POITool.Search(tripRequest.Destination, keyword, mapConfig)
+			partial, status, searchErr := a.POITool.SearchWithDebug(tripRequest.Destination, keyword, mapConfig)
+			recordPOISearchDebug(keyword, partial, status, searchErr, rawPOICountByKeyword, searchStatusByKeyword, searchErrorByKeyword)
+			rawAttractions = append(rawAttractions, partial...)
 			attractions = append(attractions, partial...)
 		}
 
 		attractions = deduplicateAttractions(attractions)
 		attractions = a.PreferenceAdapterTool.FilterAttractions(attractions, preferenceConstraints)
 
-		fallbackKeywords := a.PreferenceAdapterTool.BuildFallbackAttractionSearchKeywords(tripRequest, attractions, preferenceConstraints)
-		if len(fallbackKeywords) > 0 {
-			for _, keyword := range fallbackKeywords {
-				partial := a.POITool.Search(tripRequest.Destination, keyword, mapConfig)
-				attractions = append(attractions, partial...)
+		fallbackGroups := a.PreferenceAdapterTool.BuildFallbackAttractionSearchGroups(tripRequest, attractions, preferenceConstraints)
+		if len(fallbackGroups) > 0 {
+			for _, group := range fallbackGroups {
+				for _, keyword := range group.Keywords {
+					partial, status, searchErr := a.POITool.SearchWithDebug(tripRequest.Destination, keyword, mapConfig)
+					recordPOISearchDebug(keyword, partial, status, searchErr, rawPOICountByKeyword, searchStatusByKeyword, searchErrorByKeyword)
+					rawAttractions = append(rawAttractions, partial...)
+					attractions = append(attractions, partial...)
+					fallbackKeywords = append(fallbackKeywords, keyword)
+				}
 			}
 
 			attractions = deduplicateAttractions(attractions)
@@ -245,7 +257,7 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig, mapConfig mode
 
 			agentSteps = append(agentSteps, model.AgentStep{
 				ToolName:    a.POITool.Name,
-				Description: fmt.Sprintf("核心旅行意图候选不足，使用通用兜底关键词 %s 补充搜索 POI", strings.Join(fallbackKeywords, "、")),
+				Description: fmt.Sprintf("核心旅行意图候选不足，按意图分组使用通用兜底关键词 %s 补充搜索 POI", strings.Join(fallbackKeywords, "、")),
 			})
 		}
 
@@ -268,6 +280,15 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig, mapConfig mode
 	}
 
 	tripPOIs := tools.BuildTripPOIs(attractions)
+	poiDebugReport := tools.BuildPOIDebugReport(
+		rawAttractions,
+		attractions,
+		fallbackKeywords,
+		rawPOICountByKeyword,
+		searchStatusByKeyword,
+		searchErrorByKeyword,
+		effectivePreferenceProfile,
+	)
 	dailyRoutes := a.RouteTool.RunWithPreferences(tripRequest, attractions, effectivePreferenceProfile)
 	agentSteps = append(agentSteps, model.AgentStep{
 		ToolName:    a.RouteTool.Name,
@@ -298,7 +319,7 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig, mapConfig mode
 		Description: "根据目的地、旅行天数和每晚住宿预算推荐住宿档位",
 	})
 
-	hotelOffers := a.FlyAIHotelTool.Run(tripRequest, budgetBreakdown, attractions)
+	hotelOffers := a.FlyAIHotelTool.RunWithPreferences(tripRequest, budgetBreakdown, attractions, preferenceConstraints)
 	agentSteps = append(agentSteps, model.AgentStep{
 		ToolName:    a.FlyAIHotelTool.Name,
 		Description: "使用 FlyAI / 飞猪真实酒店商品数据搜索酒店报价",
@@ -306,11 +327,11 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig, mapConfig mode
 
 	outboundTrainOffers := a.FlyAITrainTool.RunOutbound(tripRequest)
 	outboundTrainOffers = a.PreferenceAdapterTool.FilterTrainOffers(tripRequest, outboundTrainOffers, preferenceConstraints)
-	recommendedOutboundTrainOffer := selectRecommendedTrainOffer(tripRequest, outboundTrainOffers, "outbound")
+	recommendedOutboundTrainOffer := selectRecommendedTrainOffer(tripRequest, outboundTrainOffers, "outbound", preferenceConstraints)
 
 	returnTrainOffers := a.FlyAITrainTool.RunReturn(tripRequest)
 	returnTrainOffers = a.PreferenceAdapterTool.FilterTrainOffers(tripRequest, returnTrainOffers, preferenceConstraints)
-	recommendedReturnTrainOffer := selectRecommendedTrainOffer(tripRequest, returnTrainOffers, "return")
+	recommendedReturnTrainOffer := selectRecommendedTrainOffer(tripRequest, returnTrainOffers, "return", preferenceConstraints)
 
 	// 兼容旧字段：train_offers 先继续等于去程结果
 	trainOffers := outboundTrainOffers
@@ -393,6 +414,7 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig, mapConfig mode
 		effectivePreferenceProfile,
 	)
 	recommendationViolations := validateTransportRecommendation(tripRequest, tripRecommendation, effectivePreferenceProfile)
+	feasibilityIssues := tools.EvaluateFeasibility(tripRequest, routeDistance, tripRecommendation, effectivePreferenceProfile)
 	if len(recommendationViolations) > 0 {
 		agentSteps = append(agentSteps, model.AgentStep{
 			ToolName:    "final_recommendation_validator",
@@ -402,6 +424,17 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig, mapConfig mode
 		agentSteps = append(agentSteps, model.AgentStep{
 			ToolName:    "final_recommendation_validator",
 			Description: "最终推荐未发现交通硬约束冲突",
+		})
+	}
+	if len(feasibilityIssues) > 0 {
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    "feasibility_guard",
+			Description: feasibilityIssues[0].Message,
+		})
+	} else {
+		agentSteps = append(agentSteps, model.AgentStep{
+			ToolName:    "feasibility_guard",
+			Description: "未发现长距离禁飞、低预算高住宿要求或关键数据缺失等强冲突",
 		})
 	}
 
@@ -414,8 +447,9 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig, mapConfig mode
 	planQualityReport := tools.BuildPlanQualityReport(
 		dailyRoutes,
 		attractions,
-		tripRecommendation.RecommendedHotel,
+		tripRecommendation,
 		recommendationViolations,
+		feasibilityIssues,
 		effectivePreferenceProfile,
 	)
 	agentSteps = append(agentSteps, model.AgentStep{
@@ -434,6 +468,7 @@ func (a TripAgent) Run(message string, llmConfig model.LLMConfig, mapConfig mode
 		TransportPlans:                transportPlans,
 		Attractions:                   attractions,
 		TripPOIs:                      tripPOIs,
+		POIDebugReport:                poiDebugReport,
 		DailyRoutes:                   dailyRoutes,
 		BookingLinks:                  bookingLinks,
 		BestBookingOption:             bestBookingOption,
@@ -551,6 +586,32 @@ func deduplicateAttractions(attractions []model.Attraction) []model.Attraction {
 	return result
 }
 
+func recordPOISearchDebug(
+	keyword string,
+	results []model.Attraction,
+	status string,
+	searchErr string,
+	rawPOICountByKeyword map[string]int,
+	searchStatusByKeyword map[string]string,
+	searchErrorByKeyword map[string]string,
+) {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return
+	}
+
+	rawPOICountByKeyword[keyword] += len(results)
+
+	if previous, exists := searchStatusByKeyword[keyword]; exists && previous == "api_ok" {
+		return
+	}
+
+	searchStatusByKeyword[keyword] = status
+	if searchErr != "" {
+		searchErrorByKeyword[keyword] = searchErr
+	}
+}
+
 func generateSummary(request model.TripRequest, totalCost int) string {
 	if request.Budget > 0 && totalCost > request.Budget {
 		return fmt.Sprintf("当前方案预估总花费约 %d 元，可能超过你的预算 %d 元，建议降低住宿档位、减少付费景点或选择更经济的交通方式。", totalCost, request.Budget)
@@ -566,18 +627,27 @@ func generateSummary(request model.TripRequest, totalCost int) string {
 
 	return fmt.Sprintf("当前方案预估总花费约 %d 元，可作为初版旅行计划参考。", totalCost)
 }
-func selectRecommendedTrainOffer(request model.TripRequest, trainOffers []model.TrainOffer, direction string) model.TrainOffer {
+func selectRecommendedTrainOffer(
+	request model.TripRequest,
+	trainOffers []model.TrainOffer,
+	direction string,
+	preferenceConstraints []model.PreferenceConstraint,
+) model.TrainOffer {
 	candidates := make([]model.TrainOffer, 0)
+	requireHighSpeed := requestPrefersHighSpeedTrainInAgent(request) ||
+		transportConstraintsPreferHighSpeed(preferenceConstraints)
 
 	for _, offer := range trainOffers {
 		if offer.Status != "ok" || offer.Price <= 0 {
 			continue
 		}
 
-		if request.TransportPreference == "高铁" {
-			if !isHighSpeedTrainOffer(offer) {
-				continue
-			}
+		if requireHighSpeed && !isHighSpeedTrainOffer(offer) {
+			continue
+		}
+
+		if requireHighSpeed && isSlowOrHardSeatTrainOffer(offer) {
+			continue
 		}
 
 		candidates = append(candidates, offer)
@@ -596,7 +666,7 @@ func selectRecommendedTrainOffer(request model.TripRequest, trainOffers []model.
 	best := candidates[0]
 
 	for _, offer := range candidates[1:] {
-		if isBetterTrainOffer(request, offer, best) {
+		if isBetterTrainOffer(request, offer, best, requireHighSpeed) {
 			best = offer
 		}
 	}
@@ -604,9 +674,36 @@ func selectRecommendedTrainOffer(request model.TripRequest, trainOffers []model.
 	return best
 }
 
+func requestPrefersHighSpeedTrainInAgent(request model.TripRequest) bool {
+	text := strings.ToLower(strings.Join([]string{
+		request.RawInput,
+		request.TransportPreference,
+		request.Preference,
+	}, " "))
+
+	return containsAny(text, []string{"高铁", "动车", "高铁或动车", "高铁动车", "只坐高铁", "优先高铁", "优先动车"})
+}
+
+func transportConstraintsPreferHighSpeed(constraints []model.PreferenceConstraint) bool {
+	for _, constraint := range constraints {
+		if !constraintAppliesToDomain(constraint, "transport") {
+			continue
+		}
+
+		if hasStringInAgent(constraint.PreferTags, "high_speed_train") ||
+			hasStringInAgent(constraint.PreferTags, "bullet_train") {
+			return true
+		}
+	}
+
+	return false
+}
+
 func isHighSpeedTrainOffer(offer model.TrainOffer) bool {
 	for _, segment := range offer.Segments {
-		if segment.TrainType == "高铁" || segment.TrainType == "动车" || segment.TrainType == "城际" {
+		if strings.Contains(segment.TrainType, "高铁") ||
+			strings.Contains(segment.TrainType, "动车") ||
+			strings.Contains(segment.TrainType, "城际") {
 			return true
 		}
 
@@ -621,7 +718,44 @@ func isHighSpeedTrainOffer(offer model.TrainOffer) bool {
 	return false
 }
 
-func isBetterTrainOffer(request model.TripRequest, current model.TrainOffer, best model.TrainOffer) bool {
+func isSlowOrHardSeatTrainOffer(offer model.TrainOffer) bool {
+	for _, segment := range offer.Segments {
+		text := strings.ToLower(strings.Join([]string{
+			segment.TrainType,
+			segment.SeatClassName,
+			segment.TrainNo,
+		}, " "))
+
+		if containsAny(text, []string{"普快", "硬座", "无座", "k", "t", "z"}) &&
+			!isHighSpeedTrainNo(segment.TrainNo) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isHighSpeedTrainNo(trainNo string) bool {
+	if trainNo == "" {
+		return false
+	}
+
+	first := trainNo[0]
+	return first == 'G' || first == 'D' || first == 'C'
+}
+
+func isBetterTrainOffer(
+	request model.TripRequest,
+	current model.TrainOffer,
+	best model.TrainOffer,
+	requireHighSpeed bool,
+) bool {
+	currentScore := scoreTrainOfferForRecommendation(request, current, requireHighSpeed)
+	bestScore := scoreTrainOfferForRecommendation(request, best, requireHighSpeed)
+	if currentScore != bestScore {
+		return currentScore > bestScore
+	}
+
 	// 轻松偏好：优先直达，再看耗时，再看价格
 	if request.Preference == "轻松" {
 		if current.JourneyType == "直达" && best.JourneyType != "直达" {
@@ -648,6 +782,97 @@ func isBetterTrainOffer(request model.TripRequest, current model.TrainOffer, bes
 
 	// 默认：价格更低优先
 	return current.Price < best.Price
+}
+
+func scoreTrainOfferForRecommendation(
+	request model.TripRequest,
+	offer model.TrainOffer,
+	requireHighSpeed bool,
+) int {
+	score := 1000
+
+	if offer.JourneyType == "直达" {
+		score += 80
+	}
+
+	if isHighSpeedTrainOffer(offer) {
+		score += 120
+	} else if requireHighSpeed {
+		score -= 1000
+	}
+
+	if isSlowOrHardSeatTrainOffer(offer) {
+		score -= 400
+	}
+
+	if offer.TotalDurationMinutes > 0 {
+		score -= offer.TotalDurationMinutes / 10
+	}
+
+	if offer.Price > 0 {
+		score -= offer.Price / 20
+	}
+
+	if isEarlyOrLateTrainOffer(offer) {
+		score -= 180
+		if isRelaxedTrainRequest(request) {
+			score -= 120
+		}
+	}
+
+	return score
+}
+
+func isRelaxedTrainRequest(request model.TripRequest) bool {
+	text := strings.ToLower(request.RawInput + " " + request.Preference)
+	return containsAny(text, []string{"轻松", "亲子", "带孩子", "不想太赶", "慢节奏"})
+}
+
+func isEarlyOrLateTrainOffer(offer model.TrainOffer) bool {
+	for _, segment := range offer.Segments {
+		departure, ok := parseTrainDateTime(segment.DepDateTime)
+		if ok {
+			hour := departure.Hour()
+			if hour < 7 || hour >= 23 {
+				return true
+			}
+		}
+
+		arrival, ok := parseTrainDateTime(segment.ArrDateTime)
+		if ok {
+			hour := arrival.Hour()
+			if hour < 6 || hour >= 23 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func parseTrainDateTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006/01/02 15:04:05",
+		"2006/01/02 15:04",
+		"15:04",
+	}
+
+	for _, layout := range layouts {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return parsed, true
+		}
+	}
+
+	return time.Time{}, false
 }
 
 func selectRecommendedFlightOffer(request model.TripRequest, flightOffers []model.FlightOffer) model.FlightOffer {
@@ -770,13 +995,17 @@ func buildTripRecommendation(
 	budgetStatus := "unknown"
 	overBudget := 0
 
-	if request.Budget > 0 {
+	criticalUnavailable := criticalRecommendationDataUnavailableInAgent(request, transportType, recommendedHotel, recommendedOutboundTrain, recommendedReturnTrain, recommendedFlight)
+
+	if request.Budget > 0 && !criticalUnavailable && totalRealCost > 0 {
 		if totalRealCost <= request.Budget {
 			budgetStatus = "ok"
 		} else {
 			budgetStatus = "over_budget"
 			overBudget = totalRealCost - request.Budget
 		}
+	} else if criticalUnavailable || totalRealCost == 0 {
+		budgetStatus = "unknown"
 	}
 
 	return model.TripRecommendation{
@@ -792,6 +1021,40 @@ func buildTripRecommendation(
 		CostItems:                costItems,
 		Reason:                   buildTripRecommendationReason(request, transportType, totalRealCost, budgetStatus, overBudget),
 	}
+}
+
+func criticalRecommendationDataUnavailableInAgent(
+	request model.TripRequest,
+	transportType string,
+	hotel model.HotelOffer,
+	outboundTrain model.TrainOffer,
+	returnTrain model.TrainOffer,
+	flight model.FlightOffer,
+) bool {
+	if transportType == "train" {
+		if outboundTrain.Status != "ok" {
+			return true
+		}
+
+		if request.Days > 1 && returnTrain.Status != "ok" {
+			return true
+		}
+	}
+
+	if transportType == "flight" && flight.Status != "ok" {
+		return true
+	}
+
+	return tripNeedsHotelInAgent(request) && hotel.Status != "ok"
+}
+
+func tripNeedsHotelInAgent(request model.TripRequest) bool {
+	if request.Days < 2 {
+		return false
+	}
+
+	text := strings.ToLower(request.RawInput + " " + request.Preference)
+	return !containsAny(text, []string{"当天往返", "不住宿", "不需要酒店", "不用酒店", "不住酒店"})
 }
 
 func selectRecommendedTransportType(
@@ -915,6 +1178,10 @@ func selectRecommendedHotel(
 			continue
 		}
 
+		if violatesHotelHardPreference(offer, preferenceConstraints) {
+			continue
+		}
+
 		candidates = append(candidates, offer)
 	}
 
@@ -930,6 +1197,27 @@ func selectRecommendedHotel(
 		}
 
 		candidates = rawCandidates
+	}
+
+	currentPreferTags := currentHotelPreferTags(preferenceConstraints)
+	if requiresSpecificCurrentHotelPreference(currentPreferTags) {
+		matched := make([]model.HotelOffer, 0, len(candidates))
+		for _, offer := range candidates {
+			if hotelMatchesCurrentSpecificPreference(offer, currentPreferTags) {
+				matched = append(matched, offer)
+			}
+		}
+
+		if len(matched) == 0 {
+			return model.HotelOffer{
+				Provider:   "fliggy",
+				DataSource: "flyai_fliggy",
+				Status:     "unavailable",
+				Message:    "没有找到满足当前住宿偏好的真实酒店报价。",
+			}
+		}
+
+		candidates = matched
 	}
 
 	best := candidates[0]
@@ -1086,6 +1374,38 @@ func violatesPreferenceConstraints(
 	return false
 }
 
+func violatesHotelHardPreference(
+	offer model.HotelOffer,
+	constraints []model.PreferenceConstraint,
+) bool {
+	text := buildHotelConstraintText(offer)
+	tags := inferHotelOfferTags(offer)
+
+	for _, constraint := range constraints {
+		if !constraintAppliesToDomain(constraint, "hotel") {
+			continue
+		}
+
+		if strings.ToLower(strings.TrimSpace(constraint.Strength)) != "hard" {
+			continue
+		}
+
+		for _, keyword := range constraint.ExcludeKeywords {
+			if keyword != "" && strings.Contains(text, strings.ToLower(keyword)) {
+				return true
+			}
+		}
+
+		for _, tag := range constraint.AvoidTags {
+			if hasStringInAgent(tags, tag) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 func hasHardConstraintForDomain(constraints []model.PreferenceConstraint, domain string) bool {
 	for _, constraint := range constraints {
 		if !constraintAppliesToDomain(constraint, domain) {
@@ -1098,6 +1418,55 @@ func hasHardConstraintForDomain(constraints []model.PreferenceConstraint, domain
 	}
 
 	return false
+}
+
+func currentHotelPreferTags(constraints []model.PreferenceConstraint) []string {
+	tags := make([]string, 0)
+
+	for _, constraint := range constraints {
+		if strings.ToLower(strings.TrimSpace(constraint.Source)) != "current_request" {
+			continue
+		}
+
+		if !constraintAppliesToDomain(constraint, "hotel") {
+			continue
+		}
+
+		tags = append(tags, constraint.PreferTags...)
+	}
+
+	return uniqueStringsInAgent(tags)
+}
+
+func requiresSpecificCurrentHotelPreference(tags []string) bool {
+	return hasAnyStringInAgent(tags, []string{
+		"high_end_hotel",
+		"resort",
+		"sea_nearby",
+		"homestay",
+		"guesthouse",
+		"unique_stay",
+	})
+}
+
+func hotelMatchesCurrentSpecificPreference(offer model.HotelOffer, currentPreferTags []string) bool {
+	tags := inferHotelOfferTags(offer)
+
+	if hasAnyStringInAgent(currentPreferTags, []string{"high_end_hotel", "resort", "comfort_hotel"}) &&
+		!hasAnyStringInAgent(tags, []string{"high_end_hotel", "resort", "comfort_hotel"}) {
+		return false
+	}
+
+	if hasStringInAgent(currentPreferTags, "sea_nearby") && !hasStringInAgent(tags, "sea_nearby") {
+		return false
+	}
+
+	if hasAnyStringInAgent(currentPreferTags, []string{"homestay", "guesthouse", "unique_stay"}) &&
+		!hasAnyStringInAgent(tags, []string{"homestay", "guesthouse", "unique_stay"}) {
+		return false
+	}
+
+	return true
 }
 
 func isBetterHotelOfferWithConstraints(
@@ -1124,8 +1493,10 @@ func scoreHotelByPreferenceConstraints(
 	dailyRoutes []model.DailyRoute,
 ) int {
 	text := buildHotelConstraintText(offer)
+	tags := inferHotelOfferTags(offer)
 
 	score := 0
+	currentPreferTags := currentHotelPreferTags(constraints)
 
 	for _, constraint := range constraints {
 		if !constraintAppliesToDomain(constraint, "hotel") {
@@ -1138,8 +1509,24 @@ func scoreHotelByPreferenceConstraints(
 			}
 		}
 
+		for _, tag := range constraint.PreferTags {
+			if hasStringInAgent(tags, tag) {
+				score += constraintWeightInAgent(constraint)
+			}
+		}
+
 		for _, keyword := range constraint.ExcludeKeywords {
 			if strings.Contains(text, strings.ToLower(keyword)) {
+				if constraint.Strength == "hard" {
+					score -= 100
+				} else {
+					score -= 10
+				}
+			}
+		}
+
+		for _, tag := range constraint.AvoidTags {
+			if hasStringInAgent(tags, tag) {
 				if constraint.Strength == "hard" {
 					score -= 100
 				} else {
@@ -1151,6 +1538,20 @@ func scoreHotelByPreferenceConstraints(
 
 	if containsAny(text, []string{"民宿", "客栈", "海边民宿"}) && prefersNonstandardAccommodation(constraints) {
 		score += 12
+	}
+
+	if hasAnyStringInAgent(currentPreferTags, []string{"high_end_hotel", "resort", "sea_nearby"}) {
+		if hasStringInAgent(tags, "budget_hotel") {
+			score -= 45
+		}
+		if hasStringInAgent(tags, "chain_hotel") && !hasAnyStringInAgent(tags, []string{"high_end_hotel", "resort", "comfort_hotel", "sea_nearby"}) {
+			score -= 25
+		}
+	}
+
+	if hasAnyStringInAgent(currentPreferTags, []string{"homestay", "guesthouse", "unique_stay"}) &&
+		!hasAnyStringInAgent(tags, []string{"homestay", "guesthouse", "unique_stay"}) {
+		score -= 40
 	}
 
 	if containsAny(text, []string{"家庭式", "家庭旅馆", "旅社", "招待所", "客栈", "民宿"}) && !prefersNonstandardAccommodation(constraints) {
@@ -1168,6 +1569,105 @@ func scoreHotelByPreferenceConstraints(
 	score += scoreHotelByRouteCoreDistance(offer, dailyRoutes)
 
 	return score
+}
+
+func inferHotelOfferTags(offer model.HotelOffer) []string {
+	text := buildHotelConstraintText(offer)
+	tags := make([]string, 0)
+
+	if containsAny(text, []string{"如家", "汉庭", "全季", "7天", "海友", "布丁", "易佰", "锦江", "速8"}) {
+		tags = append(tags, "chain_hotel", "hotel")
+	}
+
+	if containsAny(text, []string{"酒店", "宾馆"}) {
+		tags = append(tags, "hotel")
+	}
+
+	if containsAny(text, []string{"青旅", "青年旅舍", "多人间", "床位房", "hostel"}) {
+		tags = append(tags, "hostel")
+	}
+
+	if containsAny(text, []string{"民宿", "家庭旅社"}) {
+		tags = append(tags, "homestay")
+	}
+
+	if containsAny(text, []string{"客栈", "旅社"}) {
+		tags = append(tags, "guesthouse")
+	}
+
+	if containsAny(text, []string{"公寓"}) {
+		tags = append(tags, "apartment")
+	}
+
+	if containsAny(text, []string{"海边", "海景", "海滨", "滨海"}) {
+		tags = append(tags, "sea_nearby")
+	}
+
+	if containsAny(text, []string{"高端", "豪华", "五星", "四星", "度假", "resort"}) {
+		tags = append(tags, "high_end_hotel", "resort", "comfort_hotel")
+	}
+
+	if containsAny(text, []string{"地铁"}) {
+		tags = append(tags, "metro_nearby")
+	}
+
+	if containsAny(text, []string{"经济型", "快捷"}) {
+		tags = append(tags, "budget_hotel")
+	}
+
+	if containsAny(text, []string{"特色", "本地特色", "设计师", "精品"}) {
+		tags = append(tags, "unique_stay")
+	}
+
+	return uniqueStringsInAgent(tags)
+}
+
+func constraintWeightInAgent(constraint model.PreferenceConstraint) int {
+	priority := constraint.Priority
+	if priority <= 0 {
+		priority = 50
+	}
+
+	if strings.ToLower(strings.TrimSpace(constraint.Source)) == "current_request" {
+		priority += 40
+	}
+
+	if priority > 100 {
+		priority = 100
+	}
+
+	if priority < 10 {
+		priority = 10
+	}
+
+	return priority / 5
+}
+
+func uniqueStringsInAgent(items []string) []string {
+	result := make([]string, 0, len(items))
+	seen := map[string]bool{}
+
+	for _, item := range items {
+		item = strings.ToLower(strings.TrimSpace(item))
+		if item == "" || seen[item] {
+			continue
+		}
+
+		seen[item] = true
+		result = append(result, item)
+	}
+
+	return result
+}
+
+func hasAnyStringInAgent(items []string, targets []string) bool {
+	for _, target := range targets {
+		if hasStringInAgent(items, target) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func prefersNonstandardAccommodation(constraints []model.PreferenceConstraint) bool {

@@ -8,6 +8,7 @@ type FinalTripPlan struct {
 	TransportPlans                []TransportPlan            `json:"transport_plans"`
 	Attractions                   []Attraction               `json:"attractions"`
 	TripPOIs                      []TripPOI                  `json:"trip_pois"`
+	POIDebugReport                POIDebugReport             `json:"poi_debug_report"`
 	DailyRoutes                   []DailyRoute               `json:"daily_routes"`
 	BookingLinks                  []BookingLink              `json:"booking_links"`
 	BestBookingOption             BestBookingOption          `json:"best_booking_option"`

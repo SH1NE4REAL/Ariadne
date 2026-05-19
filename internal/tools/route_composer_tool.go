@@ -14,6 +14,7 @@ const (
 	tripPOIRoleFoodSpot       = "food_spot"
 	tripPOIRoleShoppingSpot   = "shopping_spot"
 	tripPOIRoleTransitNearby  = "transit_nearby"
+	tripPOIRoleSupportSpot    = "support_spot"
 	tripPOIRoleInvalid        = "invalid"
 )
 
@@ -81,6 +82,11 @@ func ComposeDailyRoutesFromTripPOIs(
 ) []model.DailyRoute {
 	if request.Days <= 0 {
 		request.Days = 1
+	}
+
+	pois = filterTripPOIsForRoute(pois, preferenceProfile)
+	if isSameDayBusinessTrip(request, preferenceProfile) {
+		return composeSameDayBusinessRoute(request, pois)
 	}
 
 	clusters := ClusterTripPOIs(pois)
@@ -178,8 +184,123 @@ func ClusterTripPOIs(pois []model.TripPOI) []model.POICluster {
 	return clusters
 }
 
+func filterTripPOIsForRoute(pois []model.TripPOI, preferenceProfile model.EffectivePreferenceProfile) []model.TripPOI {
+	result := make([]model.TripPOI, 0, len(pois))
+
+	avoidShopping := hasString(preferenceProfile.Attraction.HardAvoidTags, "shopping") ||
+		hasString(preferenceProfile.Attraction.HardAvoidTags, "commercial_area")
+	avoidHighExertion := hasString(preferenceProfile.Attraction.HardAvoidTags, "mountain") ||
+		hasString(preferenceProfile.Attraction.HardAvoidTags, "hiking") ||
+		hasString(preferenceProfile.Attraction.HardAvoidTags, "high_exertion")
+
+	for _, poi := range pois {
+		if !isRouteAllowedPOIRole(poi.Role) {
+			continue
+		}
+
+		if avoidShopping && (poi.Role == tripPOIRoleShoppingSpot || hasAnyTag(poi.Tags, []string{"shopping", "commercial_area"})) {
+			continue
+		}
+
+		if avoidHighExertion && isMountainLikePOI(poi) {
+			continue
+		}
+
+		result = append(result, poi)
+	}
+
+	return result
+}
+
+func composeSameDayBusinessRoute(request model.TripRequest, pois []model.TripPOI) []model.DailyRoute {
+	selected := make([]model.TripPOI, 0, 1)
+
+	for _, poi := range sortedPOICandidates(pois) {
+		if poi.Role != tripPOIRoleMainAttraction {
+			continue
+		}
+
+		if !hasAnyTag(poi.Tags, []string{"city_walk", "landmark", "low_exertion"}) {
+			continue
+		}
+
+		if hasAnyTag(poi.Tags, []string{"museum", "science_museum", "astronomy", "aquarium", "shopping", "commercial_area", "mountain", "hiking", "high_exertion"}) {
+			continue
+		}
+
+		selected = append(selected, poi)
+		break
+	}
+
+	attractionsForDay := tripPOIsToAttractions(selected)
+	summary := "Same-day business template: no full tourism route is arranged."
+	if len(selected) > 0 {
+		summary = "Same-day business template: arranged one light city walk or landmark stop."
+	}
+
+	return []model.DailyRoute{
+		{
+			Day:           1,
+			Title:         "Day 1 business route",
+			Attractions:   attractionsForDay,
+			Summary:       summary,
+			EstimatedCost: calculateRouteCost(attractionsForDay),
+			DataSource:    "route_composer",
+		},
+	}
+}
+
+func isRouteAllowedPOIRole(role string) bool {
+	switch role {
+	case tripPOIRoleMainAttraction, tripPOIRoleFoodSpot, tripPOIRoleShoppingSpot:
+		return true
+	default:
+		return false
+	}
+}
+
+func isMountainLikePOI(poi model.TripPOI) bool {
+	if hasAnyTag(poi.Tags, []string{"mountain", "hiking", "high_exertion"}) {
+		return true
+	}
+
+	text := strings.ToLower(strings.Join([]string{
+		poi.Name,
+		poi.Category,
+		poi.Description,
+		poi.Address,
+		strings.Join(poi.Tags, " "),
+	}, " "))
+
+	return containsAnyText(text, []string{"观景台", "山", "峰", "登山", "徒步", "峡谷", "山地"})
+}
+
 func classifyTripPOIRole(profile model.POIProfile, tags []string) string {
 	if profile.Invalid {
+		return tripPOIRoleInvalid
+	}
+
+	text := strings.ToLower(strings.Join([]string{
+		profile.Name,
+		profile.Category,
+		profile.Description,
+		profile.Address,
+	}, " "))
+	category := strings.ToLower(profile.Category)
+
+	if isFoodPOIText(text, category) {
+		return tripPOIRoleFoodSpot
+	}
+
+	if isShoppingPOIText(text, category) {
+		return tripPOIRoleShoppingSpot
+	}
+
+	if containsAnyText(text, []string{"花鸟鱼虫", "宠物市场", "花鸟市场", "鱼虫市场"}) {
+		return tripPOIRoleShoppingSpot
+	}
+
+	if containsAnyText(text, []string{"观景台"}) && !isCoreAttractionCategory(category) {
 		return tripPOIRoleInvalid
 	}
 
@@ -199,6 +320,9 @@ func classifyTripPOIRole(profile model.POIProfile, tags []string) string {
 		"art_gallery",
 		"memorial",
 		"science_museum",
+		"astronomy",
+		"children_exhibition",
+		"natural_science",
 		"aquarium",
 		"zoo",
 		"historic_site",
@@ -228,7 +352,32 @@ func classifyTripPOIRole(profile model.POIProfile, tags []string) string {
 		return tripPOIRoleTransitNearby
 	}
 
-	return tripPOIRoleMainAttraction
+	return tripPOIRoleSupportSpot
+}
+
+func isFoodPOIText(text string, category string) bool {
+	return containsAnyText(category, []string{"美食:小吃快餐", "美食:中餐厅", "美食:其它美食", "餐饮", "餐厅", "饭店"}) ||
+		containsAnyText(text, []string{"餐厅", "饭店", "小吃店", "沙茶面", "姜母鸭", "咖啡", "茶馆", "老字号"})
+}
+
+func isShoppingPOIText(text string, category string) bool {
+	return containsAnyText(category, []string{"购物:综合商场", "购物:购物中心", "购物:商业步行街", "购物", "商场", "市场"}) ||
+		containsAnyText(text, []string{"购物中心", "综合商场", "百货", "mall", "商业广场", "商业街", "商业步行街", "普通商场"})
+}
+
+func isCoreAttractionCategory(category string) bool {
+	return containsAnyText(category, []string{
+		"旅游景点:国家级景点",
+		"旅游景点:风景名胜",
+		"旅游景点:海滩",
+		"旅游景点:纪念馆",
+		"旅游景点:水族馆",
+		"文化场馆:博物馆",
+		"文化场馆:科技馆",
+		"文化场馆:天文馆",
+		"旅游景点",
+		"风景名胜",
+	})
 }
 
 func enrichTripPOITags(tags []string, attraction model.Attraction) []string {
@@ -261,10 +410,23 @@ func enrichTripPOITags(tags []string, attraction model.Attraction) []string {
 	}
 
 	if containsAnyText(text, []string{"科技馆", "科学中心", "科普馆"}) {
-		result = append(result, "science_museum", "family", "indoor")
+		result = append(result, "science_museum", "natural_science", "family", "indoor")
 	}
 
-	if containsAnyText(text, []string{"海洋馆", "水族馆"}) {
+	if containsAnyText(text, []string{"天文馆"}) {
+		result = append(result, "astronomy", "natural_science", "family", "indoor")
+	}
+
+	if containsAnyText(text, []string{"自然博物馆", "自然科学", "自然历史"}) {
+		result = append(result, "natural_science", "science_museum", "family", "indoor")
+	}
+
+	if containsAnyText(text, []string{"儿童展览", "儿童馆", "儿童博物馆", "儿童科学"}) {
+		result = append(result, "children_exhibition", "family", "indoor")
+	}
+
+	if containsAnyText(text, []string{"海洋馆", "水族馆"}) &&
+		!containsAnyText(text, []string{"花鸟鱼虫", "宠物市场", "花鸟市场", "鱼虫市场", "市场"}) {
 		result = append(result, "aquarium", "family", "indoor")
 	}
 
@@ -286,6 +448,8 @@ func scoreTripPOI(tags []string, role string, rank int) int {
 		score += 40
 	case tripPOIRoleTransitNearby:
 		score += 10
+	case tripPOIRoleSupportSpot:
+		score -= 20
 	default:
 		score -= 100
 	}
@@ -356,6 +520,10 @@ func buildDayPlanTemplate(
 		template.ShoppingPOICount = 1
 	}
 
+	if hardAvoidsShopping(preferenceProfile) {
+		template.ShoppingPOICount = 0
+	}
+
 	return template
 }
 
@@ -424,7 +592,7 @@ func selectPOIsForDay(
 		}
 	}
 
-	if template.FoodPOICount > 0 && (prefersFood(preferenceProfile) || countRole(selected, tripPOIRoleMainAttraction) > 0) {
+	if template.FoodPOICount > 0 && countRole(selected, tripPOIRoleMainAttraction) > 0 {
 		selected = appendSelectedPOIs(selected, clusterPOIs, usedPOIs, tripPOIRoleFoodSpot, template.FoodPOICount)
 		if countRole(selected, tripPOIRoleFoodSpot) == 0 {
 			selected = appendSelectedPOIs(selected, allPOIs, usedPOIs, tripPOIRoleFoodSpot, template.FoodPOICount)
@@ -440,10 +608,6 @@ func selectPOIsForDay(
 
 	if len(selected) == 0 {
 		selected = appendSelectedPOIs(selected, allPOIs, usedPOIs, tripPOIRoleMainAttraction, 1)
-	}
-
-	if len(selected) == 0 && !hasUnusedRole(allPOIs, usedPOIs, tripPOIRoleMainAttraction) {
-		selected = appendSelectedPOIs(selected, allPOIs, usedPOIs, tripPOIRoleFoodSpot, 1)
 	}
 
 	return selected
@@ -497,7 +661,7 @@ func appendSelectedTaggedPOI(
 
 	for _, poi := range sorted {
 		key := tripPOIKey(poi)
-		if poi.Role == tripPOIRoleInvalid || usedPOIs[key] || selectedKeys[key] {
+		if poi.Role != tripPOIRoleMainAttraction || usedPOIs[key] || selectedKeys[key] {
 			continue
 		}
 
@@ -515,22 +679,29 @@ func appendRequiredIntentPOIs(
 	usedPOIs map[string]bool,
 	preferenceProfile model.EffectivePreferenceProfile,
 ) []model.TripPOI {
-	requiredTags := requiredRouteIntentTags(preferenceProfile)
-	if len(requiredTags) == 0 || selectedHasAnyTag(selected, requiredTags) {
+	groups := requiredRouteIntentTagGroups(preferenceProfile)
+	if len(groups) == 0 {
 		return selected
 	}
 
-	sorted := sortedPOICandidates(candidates)
-	selectedKeys := selectedPOIKeys(selected)
-
-	for _, poi := range sorted {
-		key := tripPOIKey(poi)
-		if poi.Role == tripPOIRoleInvalid || usedPOIs[key] || selectedKeys[key] {
+	for _, requiredTags := range groups {
+		if selectedHasAnyTag(selected, requiredTags) {
 			continue
 		}
 
-		if hasAnyTag(poi.Tags, requiredTags) {
-			return append(selected, poi)
+		sorted := sortedPOICandidates(candidates)
+		selectedKeys := selectedPOIKeys(selected)
+
+		for _, poi := range sorted {
+			key := tripPOIKey(poi)
+			if poi.Role != tripPOIRoleMainAttraction || usedPOIs[key] || selectedKeys[key] {
+				continue
+			}
+
+			if hasAnyTag(poi.Tags, requiredTags) {
+				selected = append(selected, poi)
+				break
+			}
 		}
 	}
 
@@ -538,18 +709,56 @@ func appendRequiredIntentPOIs(
 }
 
 func selectedSatisfiesRequiredIntent(pois []model.TripPOI, preferenceProfile model.EffectivePreferenceProfile) bool {
-	requiredTags := requiredRouteIntentTags(preferenceProfile)
-	return len(requiredTags) == 0 || selectedHasAnyTag(pois, requiredTags)
-}
-
-func requiredRouteIntentTags(preferenceProfile model.EffectivePreferenceProfile) []string {
-	for _, tag := range []string{"sea", "beach", "waterfront", "coast"} {
-		if hasString(preferenceProfile.Attraction.HardPreferTags, tag) || hasString(preferenceProfile.Attraction.SoftPreferTags, tag) {
-			return []string{"sea", "beach", "waterfront", "coast"}
+	for _, requiredTags := range requiredRouteIntentTagGroups(preferenceProfile) {
+		if !selectedHasAnyTag(pois, requiredTags) {
+			return false
 		}
 	}
 
-	return nil
+	return true
+}
+
+func requiredRouteIntentTags(preferenceProfile model.EffectivePreferenceProfile) []string {
+	groups := requiredRouteIntentTagGroups(preferenceProfile)
+	if len(groups) == 0 {
+		return nil
+	}
+
+	return groups[0]
+}
+
+func requiredRouteIntentTagGroups(preferenceProfile model.EffectivePreferenceProfile) [][]string {
+	groups := make([][]string, 0)
+
+	for _, tag := range []string{"sea", "beach", "waterfront", "coast"} {
+		if hasString(preferenceProfile.Attraction.HardPreferTags, tag) || hasString(preferenceProfile.Attraction.SoftPreferTags, tag) {
+			groups = append(groups, []string{"sea", "beach", "waterfront", "coast"})
+			break
+		}
+	}
+
+	for _, tag := range []string{"family", "science_museum", "astronomy", "aquarium", "children_exhibition", "natural_science", "indoor", "child_friendly"} {
+		if hasString(preferenceProfile.Attraction.HardPreferTags, tag) || hasString(preferenceProfile.Attraction.SoftPreferTags, tag) {
+			groups = append(groups, []string{"science_museum", "astronomy", "aquarium", "children_exhibition", "natural_science"})
+			break
+		}
+	}
+
+	for _, tag := range []string{"night_view", "landmark"} {
+		if hasString(preferenceProfile.Attraction.HardPreferTags, tag) || hasString(preferenceProfile.Attraction.SoftPreferTags, tag) {
+			groups = append(groups, []string{"night_view", "landmark", "waterfront"})
+			break
+		}
+	}
+
+	for _, tag := range []string{"old_street", "city_walk", "historic_site"} {
+		if hasString(preferenceProfile.Attraction.HardPreferTags, tag) || hasString(preferenceProfile.Attraction.SoftPreferTags, tag) {
+			groups = append(groups, []string{"old_street", "city_walk", "historic_site"})
+			break
+		}
+	}
+
+	return groups
 }
 
 func sortedPOICandidates(candidates []model.TripPOI) []model.TripPOI {
@@ -773,4 +982,27 @@ func prefersShopping(preferenceProfile model.EffectivePreferenceProfile) bool {
 func prefersNightView(preferenceProfile model.EffectivePreferenceProfile) bool {
 	return hasString(preferenceProfile.Attraction.HardPreferTags, "night_view") ||
 		hasString(preferenceProfile.Attraction.SoftPreferTags, "night_view")
+}
+
+func hardAvoidsShopping(preferenceProfile model.EffectivePreferenceProfile) bool {
+	return hasString(preferenceProfile.Attraction.HardAvoidTags, "shopping") ||
+		hasString(preferenceProfile.Attraction.HardAvoidTags, "commercial_area")
+}
+
+func isSameDayBusinessTrip(
+	request model.TripRequest,
+	preferenceProfile model.EffectivePreferenceProfile,
+) bool {
+	text := strings.ToLower(request.RawInput + " " + request.Preference)
+
+	hasBusinessIntent := containsAnyText(text, []string{"出差", "商务", "开会", "会议", "办事"}) ||
+		hasString(preferenceProfile.Route.HardPreferTags, "business_trip") ||
+		hasString(preferenceProfile.Route.SoftPreferTags, "business_trip")
+
+	hasSameDayIntent := request.Days <= 1 ||
+		containsAnyText(text, []string{"当天往返", "当日往返", "当天来回", "不住宿", "不需要酒店"}) ||
+		hasString(preferenceProfile.Route.HardPreferTags, "same_day_return") ||
+		hasString(preferenceProfile.Route.SoftPreferTags, "same_day_return")
+
+	return hasBusinessIntent && hasSameDayIntent
 }

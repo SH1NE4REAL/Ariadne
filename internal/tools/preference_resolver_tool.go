@@ -39,12 +39,22 @@ func addConstraintToDomainPreference(preference *model.EffectiveDomainPreference
 
 	if hard {
 		for _, tag := range constraint.AvoidTags {
+			if strings.ToLower(strings.TrimSpace(constraint.Source)) != "current_request" &&
+				hasString(preference.SoftPreferTags, tag) {
+				continue
+			}
+
 			addUniqueLower(&preference.HardAvoidTags, tag)
 			removeString(&preference.HardPreferTags, tag)
 			removeString(&preference.SoftPreferTags, tag)
 		}
 
 		for _, keyword := range constraint.ExcludeKeywords {
+			if strings.ToLower(strings.TrimSpace(constraint.Source)) != "current_request" &&
+				hasString(preference.SoftPreferKeywords, keyword) {
+				continue
+			}
+
 			addUniqueLower(&preference.HardAvoidKeywords, keyword)
 			removeString(&preference.HardPreferKeywords, keyword)
 			removeString(&preference.SoftPreferKeywords, keyword)

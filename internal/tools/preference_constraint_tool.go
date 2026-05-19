@@ -66,9 +66,14 @@ func (t PreferenceConstraintTool) BuildConstraintsFromRequest(request model.Trip
 	childFriendly := containsAnyConstraintText(text, []string{"亲子", "带孩子", "带小孩", "小朋友", "儿童", "8岁", "八岁"})
 	avoidNightlife := containsAnyConstraintText(text, []string{"不要酒吧", "不要夜生活", "不去酒吧", "不去夜店", "不要夜店", "不想夜生活"})
 	avoidInfluencerStreet := containsAnyConstraintText(text, []string{"不要网红街区", "不去网红街区", "不要网红店", "不要网红"})
-	avoidShopping := containsAnyConstraintText(text, []string{"不要普通商场", "不去普通商场", "不要商场", "不逛商场"})
+	avoidShopping := containsAnyConstraintText(text, []string{
+		"不要普通商场", "不去普通商场", "不要商场", "不逛商场",
+		"不想购物", "不购物", "不要购物", "不想去商场", "别去商场",
+		"不要市场", "不去市场", "不逛市场", "不要普通市场",
+	})
 	avoidHomestay := hasNegativeAccommodationIntent(text, []string{"民宿", "客栈", "公寓", "青旅", "旅社"})
 	preferHomestay := !avoidHomestay && hasPositiveAccommodationIntent(text, []string{"民宿", "客栈"})
+	preferHighEndHotel := containsAnyConstraintText(text, []string{"高端酒店", "度假酒店", "住好一点", "海边酒店", "海景酒店", "resort"})
 
 	if avoidFlight || preferHighSpeedTrain {
 		strength := "soft"
@@ -110,12 +115,25 @@ func (t PreferenceConstraintTool) BuildConstraintsFromRequest(request model.Trip
 	if preferHomestay {
 		constraints = append(constraints, model.PreferenceConstraint{
 			Domain:         "hotel",
-			PreferTags:     []string{"homestay", "guesthouse", "local_stay"},
-			PreferKeywords: []string{"民宿", "客栈", "特色住宿", "海边民宿"},
+			PreferTags:     []string{"homestay", "guesthouse", "sea_nearby", "unique_stay"},
+			PreferKeywords: []string{"民宿", "客栈", "海边", "特色"},
 			Strength:       "soft",
 			Priority:       90,
 			Source:         "current_request",
 			Reason:         "当前请求表达了想体验民宿或客栈类特色住宿",
+			SourceMemoryID: "current_request",
+		})
+	}
+
+	if preferHighEndHotel {
+		constraints = append(constraints, model.PreferenceConstraint{
+			Domain:         "hotel",
+			PreferTags:     []string{"high_end_hotel", "resort", "sea_nearby", "comfort_hotel"},
+			PreferKeywords: []string{"高端", "度假", "海边", "海景", "resort", "酒店"},
+			Strength:       "soft",
+			Priority:       95,
+			Source:         "current_request",
+			Reason:         "当前请求偏好高端海边酒店或度假酒店",
 			SourceMemoryID: "current_request",
 		})
 	}
@@ -248,11 +266,11 @@ func (t PreferenceConstraintTool) BuildConstraintsFromRequest(request model.Trip
 		constraints = append(constraints, model.PreferenceConstraint{
 			Domain:          "attraction",
 			AvoidTags:       []string{"shopping", "commercial_area"},
-			ExcludeKeywords: []string{"普通商场", "商场", "购物中心"},
+			ExcludeKeywords: []string{"普通商场", "商场", "购物中心", "购物", "市场", "商业街", "百货"},
 			Strength:        "hard",
 			Priority:        100,
 			Source:          "current_request",
-			Reason:          "当前请求明确不要普通商场",
+			Reason:          "当前请求明确不要购物、商场或普通市场",
 			SourceMemoryID:  "current_request",
 		})
 	}

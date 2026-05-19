@@ -53,20 +53,19 @@ func GenerateBudgetBreakdown(request model.TripRequest, bestBookingOption model.
 	hotelRatio := 40
 	foodRatio := 25
 	attractionRatio := 20
-	
 
 	if request.Preference == "省钱" {
 		hotelRatio = 35
 		foodRatio = 30
 		attractionRatio = 15
-		
+
 	}
 
 	if request.Preference == "轻松" {
 		hotelRatio = 45
 		foodRatio = 25
 		attractionRatio = 15
-		
+
 	}
 
 	hotelBudget := remainingBudget * hotelRatio / 100
@@ -100,9 +99,22 @@ func GenerateBudgetBreakdown(request model.TripRequest, bestBookingOption model.
 
 func generateBudgetSuggestions(request model.TripRequest, hotelBudgetPerNight int, foodBudget int, attractionBudget int, reserveBudget int) []string {
 	suggestions := make([]string, 0)
+	requestText := request.RawInput + " " + request.Preference
 
-	if hotelBudgetPerNight < 200 {
-		suggestions = append(suggestions, "当前每晚住宿预算偏低，建议优先选择青旅、经济型酒店或远离热门景区的住宿。")
+	if containsAnyText(requestText, []string{"高端酒店", "度假酒店", "住好一点", "海边酒店", "海景酒店", "resort", "四星以上", "五星"}) {
+		if hotelBudgetPerNight < 800 {
+			suggestions = append(suggestions, "当前每晚住宿预算可能不足以稳定匹配高端、海景或度假酒店，若坚持该住宿偏好，需优先提高住宿预算或接受无可用酒店结果。")
+		} else {
+			suggestions = append(suggestions, "住宿预算应优先用于筛选高端、海景或度假酒店，而不是经济型连锁酒店。")
+		}
+	} else if containsAnyText(requestText, []string{"想体验民宿", "想住民宿", "海边民宿", "特色民宿", "客栈", "特色客栈", "特色住宿"}) {
+		if hotelBudgetPerNight < 300 {
+			suggestions = append(suggestions, "当前每晚住宿预算可能不足以稳定匹配有特色的民宿或客栈，建议提高住宿预算或接受无可用住宿结果。")
+		} else {
+			suggestions = append(suggestions, "住宿预算应优先用于筛选民宿、客栈或特色住宿，而不是默认经济型连锁酒店。")
+		}
+	} else if hotelBudgetPerNight < 200 {
+		suggestions = append(suggestions, "当前每晚住宿预算偏低，建议优先选择安全、交通便利且符合住宿硬约束的低价住宿。")
 	} else if hotelBudgetPerNight < 400 {
 		suggestions = append(suggestions, "当前住宿预算适合选择经济型酒店或普通连锁酒店。")
 	} else {

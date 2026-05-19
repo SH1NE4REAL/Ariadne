@@ -45,6 +45,11 @@ Hard rules:
 11. If daily_routes has no sea/beach/waterfront/coast attraction, do not say the route can "看海" or includes sea-view experiences.
 12. If plan_quality_report.warnings is non-empty, do not say "未违反任何约束" or imply the plan has no quality issue; acknowledge the warning faithfully.
 13. If daily_routes contains invalid POIs or route quality warnings, state that the route quality still needs review instead of presenting it as fully polished.
+14. Do not mention any attraction type that is absent from daily_routes. For example, no sea/beach/waterfront route means no "看海"; no food_spot route means no "安排本地小吃".
+15. If trip_recommendation.recommended_hotel is empty or unavailable, say no qualified structured hotel was found; do not invent an area, hotel name, or hotel type.
+16. If plan_quality_report.budget_feasibility is tight or impossible, mention the budget risk briefly.
+17. If recommendation_violations is non-empty, explicitly say the plan has a hard-constraint conflict.
+18. If the request is a same-day business trip or daily_routes uses a business template, summarize it as a business trip with optional light city walk; do not package it as a full leisure travel guide.
 
 Output constraints:
 1. Return only one Chinese paragraph.

@@ -62,6 +62,19 @@ func (t POITool) Search(destination string, keyword string, mapConfig model.MapC
 	return results
 }
 
+func (t POITool) SearchWithDebug(destination string, keyword string, mapConfig model.MapConfig) ([]model.Attraction, string, string) {
+	results, err := SearchPOIsWithTencent(destination, keyword, mapConfig)
+	if err != nil {
+		return nil, "api_error", err.Error()
+	}
+
+	if len(results) == 0 {
+		return results, "api_empty", ""
+	}
+
+	return results, "api_ok", ""
+}
+
 type tencentPlaceSearchResponse struct {
 	Status  int    `json:"status"`
 	Message string `json:"message"`

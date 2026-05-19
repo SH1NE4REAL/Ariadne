@@ -57,6 +57,7 @@ func isInvalidPOI(text string, name string, category string) bool {
 		"村委会", "居委会", "政府机关", "派出所", "办事处",
 		"照明工程", "灯具用品", "灯饰",
 		"安置房", "农贸市场",
+		"建材", "家具", "道路名", "行政地名",
 		"学院", "管理咨询中心",
 		"武术俱乐部", "俱乐部", "烟酒",
 	}
@@ -72,6 +73,10 @@ func isInvalidPOI(text string, name string, category string) bool {
 		"医疗保健",
 		"政府机构",
 		"交通设施",
+		"道路",
+		"行政地名",
+		"建材",
+		"家具",
 	}
 
 	if containsAnyText(text, invalidKeywords) {
@@ -133,7 +138,9 @@ func inferPOITags(text string) []string {
 		tags = append(tags, "zoo", "family", "outdoor")
 	}
 
-	if containsAnyText(text, []string{"海洋馆", "水族馆"}) {
+	marketOrPetText := containsAnyText(text, []string{"花鸟鱼虫", "宠物市场", "花鸟市场", "鱼虫市场", "市场"})
+
+	if containsAnyText(text, []string{"海洋馆", "水族馆"}) && !marketOrPetText {
 		tags = append(tags, "aquarium", "family", "indoor")
 	}
 
